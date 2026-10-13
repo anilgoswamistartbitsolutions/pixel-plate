@@ -2106,8 +2106,11 @@ function TakeAwayView({ notify }) {
 
 function NewTakeawayModal({ onClose, onSaved }) {
   const [items, setItems] = useState([]);
-  const [lines, setLines] = useState([]);
+  const [lines, setLines] = useState([]); // { menuItemId, quantity, variantLabel? }
+  const [pendingItemId, setPendingItemId] = useState("");
+  const [pendingVariant, setPendingVariant] = useState("");
   const [form, setForm] = useState({ customerName: "", phone: "", requestedSlot: "midday", notes: "" });
+  const [stage, setStage] = useState("build"); // build -> review -> (create)
   const [quote, setQuote] = useState(null);
   const [quoting, setQuoting] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -2115,17 +2118,28 @@ function NewTakeawayModal({ onClose, onSaved }) {
 
   useEffect(() => { apiFetch("/api/menu/items").then(setItems).catch(() => {}); }, []);
 
-  function addLine(itemId) {
+  const pendingItem = items.find((i) => i.id === Number(pendingItemId));
+
+  function lineKey(line) { return `${line.menuItemId}:${line.variantLabel || ""}`; }
+
+  function addLine() {
+    if (!pendingItemId) return;
+    const menuItemId = Number(pendingItemId);
+    const variantLabel = pendingVariant || null;
     setLines((prev) => {
-      const existing = prev.find((l) => l.menuItemId === itemId);
-      if (existing) return prev.map((l) => (l.menuItemId === itemId ? { ...l, quantity: l.quantity + 1 } : l));
-      return [...prev, { menuItemId: itemId, quantity: 1 }];
+      const existing = prev.find((l) => l.menuItemId === menuItemId && (l.variantLabel || null) === variantLabel);
+      if (existing) return prev.map((l) => (l === existing ? { ...l, quantity: l.quantity + 1 } : l));
+      return [...prev, { menuItemId, quantity: 1, variantLabel }];
     });
-    setQuote(null);
+    setPendingItemId(""); setPendingVariant("");
   }
-  function removeLine(itemId) {
-    setLines((prev) => prev.filter((l) => l.menuItemId !== itemId));
-    setQuote(null);
+  function changeQuantity(line, delta) {
+    setLines((prev) => prev
+      .map((l) => (l === line ? { ...l, quantity: l.quantity + delta } : l))
+      .filter((l) => l.quantity > 0));
+  }
+  function removeLine(line) {
+    setLines((prev) => prev.filter((l) => l !== line));
   }
 
   async function getQuote() {
@@ -2134,11 +2148,11 @@ function NewTakeawayModal({ onClose, onSaved }) {
     try {
       const result = await apiFetch("/api/takeaway", { method: "POST", body: JSON.stringify({ quoteOnly: true, lines }) });
       setQuote(result);
+      setStage("review");
     } catch (e) { setError(e.message); } finally { setQuoting(false); }
   }
 
-  async function submit(e) {
-    e.preventDefault();
+  async function confirmCreate() {
     setSaving(true);
     setError("");
     try {
@@ -2146,10 +2160,43 @@ function NewTakeawayModal({ onClose, onSaved }) {
       onSaved(result.order);
     } catch (err) {
       setError(err.message);
+      setStage("build"); // price/availability may have shifted -- let staff re-check before retrying
     } finally { setSaving(false); }
   }
 
   const available = items.filter((i) => i.available && !i.sold_out);
+
+  if (stage === "review") {
+    return (
+      <div className="modalOverlay" onClick={onClose}>
+        <div className="modalCard" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+          <div className="modalHeader"><h3>Confirm takeaway order</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+          {error && <div className="loginError">{error}</div>}
+          <p className="cardHint" style={{ marginBottom: 12 }}>Review before creating -- this always needs an explicit confirmation.</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+            {quote.items.map((i, idx) => (
+              <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5 }}>
+                <span>{i.quantity}&times; {i.name}</span>
+                <span>${(Number(i.unit_price) * i.quantity).toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="cardHint" style={{ background: "var(--line-soft)", padding: 10, borderRadius: 10, marginBottom: 14 }}>
+            Subtotal ${quote.subtotal} + {quote.serviceChargePct}% service = <strong>${quote.total} total</strong>
+          </div>
+          <div className="cardHint" style={{ marginBottom: 16 }}>
+            {form.customerName} &middot; {form.phone} &middot; pickup {SLOT_OPTIONS.find(([k]) => k === form.requestedSlot)?.[1] || form.requestedSlot}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" className="button secondary" onClick={() => setStage("build")} style={{ flex: 1, justifyContent: "center" }}>Back &amp; edit</button>
+            <button type="button" className="button primary" onClick={confirmCreate} disabled={saving} style={{ flex: 1, justifyContent: "center" }}>
+              {saving ? "Creating..." : "Confirm & create order"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="modalOverlay" onClick={onClose}>
@@ -2157,12 +2204,24 @@ function NewTakeawayModal({ onClose, onSaved }) {
         <div className="modalHeader"><h3>New takeaway order</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
         {error && <div className="loginError">{error}</div>}
 
-        <div className="field" style={{ marginBottom: 14 }}>
-          <label>Add items</label>
-          <select className="select" value="" onChange={(e) => e.target.value && addLine(Number(e.target.value))}>
-            <option value="">Select a menu item...</option>
-            {available.map((i) => <option key={i.id} value={i.id}>{i.name} -- ${(i.price_cents / 100).toFixed(2)}</option>)}
-          </select>
+        <div className="formGrid" style={{ marginBottom: 14 }}>
+          <div className="field"><label>Item</label>
+            <select className="select" value={pendingItemId} onChange={(e) => { setPendingItemId(e.target.value); setPendingVariant(""); }}>
+              <option value="">Select a menu item...</option>
+              {available.map((i) => <option key={i.id} value={i.id}>{i.name} -- ${(i.price_cents / 100).toFixed(2)}</option>)}
+            </select>
+          </div>
+          {pendingItem?.size_options?.length > 0 ? (
+            <div className="field"><label>Size</label>
+              <select className="select" value={pendingVariant} onChange={(e) => setPendingVariant(e.target.value)}>
+                <option value="">Regular -- ${(pendingItem.price_cents / 100).toFixed(2)}</option>
+                {pendingItem.size_options.map((o) => <option key={o.label} value={o.label}>{o.label} -- ${(o.price_cents / 100).toFixed(2)}</option>)}
+              </select>
+            </div>
+          ) : <div className="field" />}
+          <button type="button" className="button secondary small" onClick={addLine} disabled={!pendingItemId} style={{ gridColumn: "1 / -1" }}>
+            <Plus size={14} />Add to order
+          </button>
         </div>
 
         {lines.length > 0 && (
@@ -2170,24 +2229,21 @@ function NewTakeawayModal({ onClose, onSaved }) {
             {lines.map((line) => {
               const item = items.find((i) => i.id === line.menuItemId);
               return (
-                <div key={line.menuItemId} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5 }}>
-                  <span>{line.quantity}&times; {item?.name}</span>
-                  <button type="button" className="button ghost small" onClick={() => removeLine(line.menuItemId)}><X size={13} /></button>
+                <div key={lineKey(line)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5, padding: "6px 0" }}>
+                  <span>{item?.name}{line.variantLabel ? ` (${line.variantLabel})` : ""}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button type="button" className="button ghost small" onClick={() => changeQuantity(line, -1)}>&minus;</button>
+                    <span style={{ minWidth: 16, textAlign: "center" }}>{line.quantity}</span>
+                    <button type="button" className="button ghost small" onClick={() => changeQuantity(line, 1)}>+</button>
+                    <button type="button" className="button ghost small" onClick={() => removeLine(line)}><X size={13} /></button>
+                  </div>
                 </div>
               );
             })}
-            <button type="button" className="button secondary small" onClick={getQuote} disabled={quoting} style={{ marginTop: 4 }}>
-              {quoting ? "Pricing..." : "Get quote"}
-            </button>
-            {quote && (
-              <div className="cardHint" style={{ background: "var(--line-soft)", padding: 10, borderRadius: 10 }}>
-                Subtotal ${(quote.subtotalCents / 100).toFixed(2)} + {quote.serviceChargePct}% service = <strong>${(quote.totalCents / 100).toFixed(2)} total</strong>
-              </div>
-            )}
           </div>
         )}
 
-        <form onSubmit={submit} className="formGrid">
+        <form onSubmit={(e) => { e.preventDefault(); getQuote(); }} className="formGrid">
           <div className="field"><label>Customer name</label><input className="textInput" required value={form.customerName} onChange={(e) => setForm({ ...form, customerName: e.target.value })} /></div>
           <div className="field"><label>Phone</label><input className="textInput" required value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
           <div className="field" style={{ gridColumn: "1 / -1" }}>
@@ -2199,8 +2255,8 @@ function NewTakeawayModal({ onClose, onSaved }) {
             </div>
           </div>
           <div className="field" style={{ gridColumn: "1 / -1" }}><label>Notes</label><textarea className="textarea" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
-          <button className="button primary" type="submit" disabled={saving || lines.length === 0} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>
-            {saving ? "Creating..." : "Create takeaway order (pay at pickup)"}
+          <button className="button primary" type="submit" disabled={quoting || lines.length === 0} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>
+            {quoting ? "Pricing..." : "Review & price order"}
           </button>
         </form>
       </div>
