@@ -1,0 +1,30 @@
+{
+  "name": "pixel-plate",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3010",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "db:migrate": "node scripts/migrate.cjs",
+    "db:seed": "node scripts/seed-demo.cjs",
+    "test:booking": "node tests/booking-engine.test.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.6.1",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^1.48.0",
+    "next": "^15.5.26",
+    "pg": "^8.13.1",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "recharts": "^2.15.0",
+    "sarvam-conv-ai-sdk": "^0.0.42"
+  },
+  "devDependencies": {
+    "eslint": "^9.35.0",
+    "eslint-config-next": "^15.5.26"
+  }
+}
