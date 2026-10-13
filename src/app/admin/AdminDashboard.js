@@ -234,6 +234,11 @@ function FloorPlanView({ notify, staff }) {
     apiFetch("/api/floors").then(setFloors).catch(() => {});
   }, []);
   useEffect(() => { load(); }, [load]);
+  // Re-fetch every time a floor is opened -- the list that was loaded when this page first
+  // mounted can be stale by the time staff actually click into a floor (another session's
+  // edits, a reservation made in the meantime, etc.), so entering a floor always pulls fresh
+  // data rather than trusting whatever is already sitting in memory.
+  useEffect(() => { if (openFloorId) load(); }, [openFloorId, load]);
 
   async function deleteFloor(floor) {
     if (!confirm(`Delete floor "${floor.name}"? This only works if it has no tables assigned.`)) return;
@@ -482,18 +487,28 @@ function DraggableTable({ table, selected, onSelect, onDrag, draggable }) {
   );
 }
 
-/** One chair per seat, ringed evenly around the table's actual footprint -- so a 6-top
+const CHAIR_WIDTH = 8;
+const CHAIR_HEIGHT = 16;
+
+/** One chair per seat, ringed evenly around the table's actual footprint and rotated to face
+ * the table -- a rectangle (seat + back, viewed from above), not a plain dot -- so a 6-top
  * visibly has six chairs around it, not just a capacity number in the corner. */
 function renderChairs(table) {
   const width = Number(table.width);
   const height = Number(table.height);
-  const rx = width / 2 + 11;
-  const ry = height / 2 + 11;
+  const rx = width / 2 + 12;
+  const ry = height / 2 + 12;
   return Array.from({ length: table.capacity }, (_, i) => {
     const angle = (i / table.capacity) * Math.PI * 2 - Math.PI / 2;
     const x = width / 2 + rx * Math.cos(angle);
     const y = height / 2 + ry * Math.sin(angle);
-    return <span key={i} className="chairDot" style={{ left: `${x - 6}px`, top: `${y - 6}px` }} />;
+    const rotateDeg = (angle * 180) / Math.PI + 90;
+    return (
+      <span
+        key={i} className="chairRect"
+        style={{ left: `${x - CHAIR_WIDTH / 2}px`, top: `${y - CHAIR_HEIGHT / 2}px`, transform: `rotate(${rotateDeg}deg)` }}
+      />
+    );
   });
 }
 

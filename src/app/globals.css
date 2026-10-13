@@ -231,13 +231,13 @@ a { color: var(--brand-dark); text-decoration: none; }
 .floorTable.inactive { border-color: #cfc5b7; background: #f1ece3; opacity: .6; cursor: default; }
 .floorTable.selected { box-shadow: 0 0 0 4px var(--brand-soft); border-color: var(--brand); }
 .floorTable .code { font-weight: 700; font-size: 14px; color: var(--ink); }
-.chairDot {
-  position: absolute; width: 12px; height: 12px; border-radius: 4px;
+.chairRect {
+  position: absolute; width: 8px; height: 16px; border-radius: 2px;
   background: #e4d4ba; border: 1.5px solid #c9b48c; pointer-events: none;
 }
-.floorTable.occupied .chairDot { background: #f3c9c2; border-color: var(--danger); }
-.floorTable.reserved .chairDot { background: #f6ddab; border-color: var(--amber); }
-.floorTable.inactive .chairDot { opacity: .5; }
+.floorTable.occupied .chairRect { background: #f3c9c2; border-color: var(--danger); }
+.floorTable.reserved .chairRect { background: #f6ddab; border-color: var(--amber); }
+.floorTable.inactive .chairRect { opacity: .5; }
 .floorTable .cap { font-size: 10.5px; color: var(--muted); }
 
 /* ---------------------------------------------------------------- Switches */
