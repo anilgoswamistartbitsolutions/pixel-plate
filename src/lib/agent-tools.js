@@ -189,9 +189,9 @@ export const TOOLS = {
   // has to know internal menu item IDs. Quoting is a separate step from creating: the agent
   // must read back the total (including the 5% service charge) and get explicit confirmation
   // before calling create_takeaway_order.
-  async quote_takeaway_order({ restaurantId, items }) {
+  async quote_takeaway_order({ restaurantId, items, itemsText }) {
     try {
-      const lines = await resolveItemNames(restaurantId, items);
+      const lines = await resolveItemNames(restaurantId, items || parseItemsText(itemsText));
       const quote = await quoteTakeaway(restaurantId, lines);
       return {
         ok: true,
@@ -207,9 +207,9 @@ export const TOOLS = {
     }
   },
 
-  async create_takeaway_order({ restaurantId, customerName, phone, items, slot, time, notes }) {
+  async create_takeaway_order({ restaurantId, customerName, phone, items, itemsText, slot, time, notes }) {
     try {
-      const lines = await resolveItemNames(restaurantId, items);
+      const lines = await resolveItemNames(restaurantId, items || parseItemsText(itemsText));
       const result = await createTakeawayOrder({
         restaurantId, customerName, phone, lines, requestedSlot: slot, requestedTime: time, notes, source: "voice_agent"
       });
@@ -226,11 +226,11 @@ export const TOOLS = {
     }
   },
 
-  async modify_takeaway_order({ restaurantId, orderRef, phone, items }) {
+  async modify_takeaway_order({ restaurantId, orderRef, phone, items, itemsText }) {
     const existing = await getTakeawayStatus({ restaurantId, orderRef, phone });
     if (!existing || existing.verificationFailed) return { modified: false, error: "We could not verify this order." };
     try {
-      const lines = await resolveItemNames(restaurantId, items);
+      const lines = await resolveItemNames(restaurantId, items || parseItemsText(itemsText));
       const result = await modifyTakeawayOrder(restaurantId, existing.id, lines);
       return { modified: true, total: (result.order.total_cents / 100).toFixed(2) };
     } catch (error) {
@@ -254,6 +254,19 @@ export const TOOLS = {
     return { cancelled: true };
   }
 };
+
+// The agent platform's simple webhook-tool params only support Text/Number/Boolean/enum --
+// no arrays -- so the voice agent passes items as free text ("2 California Burgers, 1 Baja
+// Fish Tacos") and this parses it into {name, quantity} lines. The dashboard's own takeaway
+// UI calls the lib functions directly with a real array and never goes through this parser.
+function parseItemsText(text) {
+  if (!text?.trim()) return [];
+  return text.split(",").map((part) => {
+    const trimmed = part.trim();
+    const match = trimmed.match(/^(\d+)\s*[x×]?\s*(.+)$/i);
+    return match ? { name: match[2].trim(), quantity: Number(match[1]) } : { name: trimmed, quantity: 1 };
+  }).filter((l) => l.name);
+}
 
 async function resolveItemNames(restaurantId, items) {
   if (!items?.length) throw new TakeawayError("At least one item is required.", "validation");

@@ -87,10 +87,7 @@ export default function AdminDashboard() {
 
       <div className="mainArea">
         <header className="topBar">
-          <div>
-            <div className="topBarTitle">{visibleNav.find((i) => i.key === view)?.label}</div>
-            <div className="topBarSub">Pixel Plate &middot; {staff.role === "super_admin" ? "Super Admin" : "Admin"} access</div>
-          </div>
+          <div className="topBarSub">Pixel Plate &middot; {staff.role === "super_admin" ? "Super Admin" : "Admin"} access</div>
           <div className="topBarRight">
             {["overview", "reservations", "reports"].includes(view) && (
               <input className="dateInput" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
