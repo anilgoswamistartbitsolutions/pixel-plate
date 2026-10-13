@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   LayoutGrid, Grid3x3, CalendarClock, Users2, UtensilsCrossed, Building2,
   Mic, PhoneCall, BarChart3, Settings, LogOut, Plus, X, Check, Ban,
-  MapPin, Clock, ShieldCheck, Sparkles, ShoppingBag, Layers, CalendarDays
+  MapPin, Clock, ShieldCheck, Sparkles, ShoppingBag, Layers, CalendarDays, UtensilsCrossed
 } from "lucide-react";
 import { apiFetch, getStaff, clearSession } from "@/lib/api-client";
 import VoiceAgentWidget from "@/components/VoiceAgentWidget";
@@ -70,7 +70,7 @@ export default function AdminDashboard() {
     <div className="appShell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brandMark">PP</div>
+          <div className="brandMark"><UtensilsCrossed size={18} /></div>
           <div>
             <div className="brandName">Pixel Plate</div>
             <div className="brandSub">Restaurant console</div>
@@ -107,7 +107,7 @@ export default function AdminDashboard() {
         </header>
         <main className="contentArea">
           {view === "overview" && <OverviewView date={date} onNavigate={setView} />}
-          {view === "floorplan" && <FloorPlanView notify={notify} />}
+          {view === "floorplan" && <FloorPlanView notify={notify} staff={staff} />}
           {view === "reservations" && <ReservationsView date={date} notify={notify} />}
           {view === "groups" && <GroupRequestsView notify={notify} />}
           {view === "menu" && <MenuView notify={notify} />}
@@ -221,65 +221,139 @@ function StatCard({ label, value, customValue, foot, onClick }) {
 
 /* ====================================================================== Floor Plan */
 
-function FloorPlanView({ notify }) {
+function FloorPlanView({ notify, staff }) {
   const [tables, setTables] = useState(null);
-  const [floors, setFloors] = useState([]);
-  const [activeFloor, setActiveFloor] = useState("all");
-  const [selected, setSelected] = useState(null);
-  const [showAdd, setShowAdd] = useState(false);
+  const [floors, setFloors] = useState(null);
+  const [openFloorId, setOpenFloorId] = useState(null);
   const [showAddFloor, setShowAddFloor] = useState(false);
-  const [editing, setEditing] = useState(null);
   const [err, setErr] = useState("");
+  const isSuperAdmin = staff?.role === "super_admin";
 
   const load = useCallback(() => {
-    apiFetch("/api/floor-plan").then((data) => {
-      setTables(data);
-      setSelected((prev) => (prev ? data.find((t) => t.id === prev.id) || null : null));
-    }).catch((e) => setErr(e.message));
+    apiFetch("/api/floor-plan").then(setTables).catch((e) => setErr(e.message));
     apiFetch("/api/floors").then(setFloors).catch(() => {});
   }, []);
-
   useEffect(() => { load(); }, [load]);
 
-  async function toggleActive(table) {
+  async function deleteFloor(floor) {
+    if (!confirm(`Delete floor "${floor.name}"? This only works if it has no tables assigned.`)) return;
     try {
-      await apiFetch(`/api/tables/${table.id}`, { method: "PATCH", body: JSON.stringify({ action: table.active ? "deactivate" : "reactivate" }) });
-      notify(table.active ? "Table deactivated" : "Table reactivated");
+      await apiFetch(`/api/floors/${floor.id}`, { method: "DELETE" });
+      notify("Floor deleted");
       load();
     } catch (e) { notify(e.message, "error"); }
   }
 
-  async function handleDrag(table, dx, dy) {
-    const posX = Math.max(0, Number(table.pos_x) + dx);
-    const posY = Math.max(0, Number(table.pos_y) + dy);
-    setTables((prev) => prev.map((t) => (t.id === table.id ? { ...t, pos_x: posX, pos_y: posY } : t)));
-    apiFetch(`/api/tables/${table.id}`, { method: "PATCH", body: JSON.stringify({ action: "move", posX, posY }) }).catch(() => {});
+  if (err) return <ErrorBlock message={err} />;
+  if (!tables || !floors) return <LoadingBlock />;
+
+  if (openFloorId) {
+    const floor = floors.find((f) => f.id === openFloorId);
+    return (
+      <FloorDetailView
+        floor={floor} tables={tables.filter((t) => t.floor_id === openFloorId)}
+        isSuperAdmin={isSuperAdmin} notify={notify}
+        onBack={() => setOpenFloorId(null)}
+        onReload={load}
+      />
+    );
   }
 
-  if (err) return <ErrorBlock message={err} />;
-  if (!tables) return <LoadingBlock />;
+  const unassignedTables = tables.filter((t) => !t.floor_id);
 
   return (
     <div>
       <div className="sectionHeader">
         <div>
           <h2>Floor plan</h2>
-          <p>Drag tables to arrange the room -- position saves automatically. Click a table to see seats, reservations, and edit it.</p>
+          <p>Select a floor to arrange its tables, or add a new one.</p>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button className="button secondary" onClick={() => setShowAddFloor(true)}><Layers size={15} />Add floor</button>
-          <button className="button primary" onClick={() => setShowAdd(true)}><Plus size={15} />Add table</button>
-        </div>
+        <button className="button primary" onClick={() => setShowAddFloor(true)}><Layers size={15} />Add floor</button>
       </div>
 
-      {floors.length > 0 && (
-        <div className="tabRow">
-          <button className={`tabChip ${activeFloor === "all" ? "active" : ""}`} onClick={() => setActiveFloor("all")}>All floors</button>
-          {floors.map((f) => (
-            <button key={f.id} className={`tabChip ${activeFloor === f.id ? "active" : ""}`} onClick={() => setActiveFloor(f.id)}>{f.name}</button>
-          ))}
+      {floors.length === 0 ? (
+        <EmptyState title="No floors yet" hint="Add a floor (e.g. Main Dining, Patio) to start placing tables." />
+      ) : (
+        <div className="grid cols-3">
+          {floors.map((floor) => {
+            const floorTables = tables.filter((t) => t.floor_id === floor.id);
+            const activeTables = floorTables.filter((t) => t.active);
+            const capacity = activeTables.reduce((sum, t) => sum + t.capacity, 0);
+            return (
+              <div key={floor.id} className="card" style={{ cursor: "pointer" }} onClick={() => setOpenFloorId(floor.id)}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div>
+                    <strong style={{ fontSize: 15 }}>{floor.name}</strong>
+                    <p className="cardHint" style={{ marginTop: 4 }}>{activeTables.length} active table{activeTables.length === 1 ? "" : "s"} &middot; {capacity} seats</p>
+                  </div>
+                  {isSuperAdmin && (
+                    <button className="button ghost small" onClick={(e) => { e.stopPropagation(); deleteFloor(floor); }} title="Delete floor">
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                <button className="button secondary small" style={{ marginTop: 12 }} onClick={() => setOpenFloorId(floor.id)}>Open floor &rarr;</button>
+              </div>
+            );
+          })}
         </div>
       )}
+
+      {unassignedTables.length > 0 && (
+        <div className="card" style={{ marginTop: 20, background: "var(--amber-soft)" }}>
+          <strong style={{ fontSize: 13.5 }}>{unassignedTables.length} table{unassignedTables.length === 1 ? "" : "s"} not assigned to a floor</strong>
+          <p className="cardHint" style={{ marginTop: 4 }}>Open a floor and edit a table to assign it, or create one directly from a floor page.</p>
+        </div>
+      )}
+
+      {showAddFloor && <AddFloorModal onClose={() => setShowAddFloor(false)} onSaved={() => { setShowAddFloor(false); notify("Floor created"); load(); }} />}
+    </div>
+  );
+}
+
+function FloorDetailView({ floor, tables, isSuperAdmin, notify, onBack, onReload }) {
+  const [selected, setSelected] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [localTables, setLocalTables] = useState(tables);
+
+  useEffect(() => { setLocalTables(tables); }, [tables]);
+
+  async function toggleActive(table) {
+    try {
+      await apiFetch(`/api/tables/${table.id}`, { method: "PATCH", body: JSON.stringify({ action: table.active ? "deactivate" : "reactivate" }) });
+      notify(table.active ? "Table deactivated" : "Table reactivated");
+      onReload();
+    } catch (e) { notify(e.message, "error"); }
+  }
+
+  async function deleteTable(table) {
+    if (!confirm(`Permanently delete table ${table.code}? This only works if it has no reservation history.`)) return;
+    try {
+      await apiFetch(`/api/tables/${table.id}`, { method: "DELETE" });
+      notify("Table deleted");
+      setSelected(null);
+      onReload();
+    } catch (e) { notify(e.message, "error"); }
+  }
+
+  async function handleDrag(table, dx, dy) {
+    const posX = Math.max(0, Number(table.pos_x) + dx);
+    const posY = Math.max(0, Number(table.pos_y) + dy);
+    setLocalTables((prev) => prev.map((t) => (t.id === table.id ? { ...t, pos_x: posX, pos_y: posY } : t)));
+    apiFetch(`/api/tables/${table.id}`, { method: "PATCH", body: JSON.stringify({ action: "move", posX, posY }) }).catch(() => {});
+  }
+
+  return (
+    <div>
+      <button className="button ghost small" style={{ marginBottom: 14 }} onClick={onBack}>&larr; All floors</button>
+      <div className="sectionHeader">
+        <div>
+          <h2>{floor?.name}</h2>
+          <p>Drag tables to arrange the room -- position saves automatically. Click a table to see seats, reservations, and edit or delete it.</p>
+        </div>
+        <button className="button primary" onClick={() => setShowAdd(true)}><Plus size={15} />Add table</button>
+      </div>
 
       <div className="legendRow">
         <span><span className="legendDot" style={{ background: "#fff", border: "2px solid var(--line)" }} />Available</span>
@@ -288,18 +362,15 @@ function FloorPlanView({ notify }) {
         <span><span className="legendDot" style={{ background: "#eee7db", border: "2px solid var(--muted)" }} />Inactive</span>
       </div>
 
-      {(() => {
-        const visibleTables = activeFloor === "all" ? tables : tables.filter((t) => t.floor_id === activeFloor);
-        return (
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
         <div className="floorCanvasWrap" style={{ flex: "1 1 560px", minWidth: 320 }}>
           <div className="floorCanvas">
-            {visibleTables.length === 0 && (
+            {localTables.length === 0 && (
               <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <EmptyState title="No tables on this floor" hint="Click Add table to place one here, or pick another floor above." />
+                <EmptyState title="No tables on this floor yet" hint="Click Add table to place your first one here." />
               </div>
             )}
-            {visibleTables.map((table) => (
+            {localTables.map((table) => (
               <DraggableTable key={table.id} table={table} selected={selected?.id === table.id} onSelect={() => setSelected(table)} onDrag={handleDrag} />
             ))}
           </div>
@@ -309,43 +380,14 @@ function FloorPlanView({ notify }) {
           {!selected ? (
             <EmptyState title="Select a table" hint="Click a table on the floor plan to see its seats and reservations." />
           ) : (
-            <TableDetail table={selected} onToggleActive={toggleActive} onEdit={() => setEditing(selected)} onClose={() => setSelected(null)} />
+            <TableDetail table={selected} onToggleActive={toggleActive} onEdit={() => setEditing(selected)}
+              onDelete={isSuperAdmin ? () => deleteTable(selected) : null} onClose={() => setSelected(null)} />
           )}
         </div>
       </div>
-        );
-      })()}
 
-      <div style={{ marginTop: 24 }}>
-        <div className="cardTitle" style={{ marginBottom: 10 }}>All tables</div>
-        <div className="tableWrap">
-          <table className="table">
-            <thead><tr><th>Code</th><th>Name</th><th>Floor</th><th>Capacity</th><th>Type</th><th>Size</th><th>Shareable</th><th>Status</th><th></th></tr></thead>
-            <tbody>
-              {tables.map((t) => (
-                <tr key={t.id}>
-                  <td><strong>{t.code}</strong></td>
-                  <td>{t.display_name}</td>
-                  <td>{floors.find((f) => f.id === t.floor_id)?.name || "--"}</td>
-                  <td>{t.capacity}</td>
-                  <td>{t.table_type}</td>
-                  <td>{t.size_label}</td>
-                  <td>{t.shareable ? "Yes" : "No"}</td>
-                  <td><span className={`badge ${t.active ? "active" : "inactive"}`}>{t.active ? "Active" : "Inactive"}</span></td>
-                  <td style={{ display: "flex", gap: 6 }}>
-                    <button className="button secondary small" onClick={() => setEditing(t)}>Edit</button>
-                    <button className="button ghost small" onClick={() => toggleActive(t)}>{t.active ? "Deactivate" : "Reactivate"}</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {showAdd && <AddTableModal floors={floors} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); notify("Table created"); load(); }} />}
-      {editing && <EditTableModal table={editing} floors={floors} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); notify("Table updated"); load(); }} />}
-      {showAddFloor && <AddFloorModal onClose={() => setShowAddFloor(false)} onSaved={() => { setShowAddFloor(false); notify("Floor created"); load(); }} />}
+      {showAdd && <AddTableModal floors={[floor]} defaultFloorId={floor?.id} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); notify("Table created"); onReload(); }} />}
+      {editing && <EditTableModal table={editing} floors={[floor]} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); notify("Table updated"); onReload(); }} />}
     </div>
   );
 }
@@ -392,7 +434,7 @@ function DraggableTable({ table, selected, onSelect, onDrag }) {
   );
 }
 
-function TableDetail({ table, onToggleActive, onEdit, onClose }) {
+function TableDetail({ table, onToggleActive, onEdit, onDelete, onClose }) {
   return (
     <div>
       <div className="modalHeader" style={{ marginBottom: 12 }}>
@@ -421,11 +463,12 @@ function TableDetail({ table, onToggleActive, onEdit, onClose }) {
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+      <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
         <button className="button secondary small" onClick={onEdit}>Edit table</button>
         <button className="button danger small" onClick={() => onToggleActive(table)}>
           {table.active ? "Deactivate" : "Reactivate"}
         </button>
+        {onDelete && <button className="button danger small" onClick={onDelete}>Delete permanently</button>}
       </div>
     </div>
   );
@@ -433,8 +476,8 @@ function TableDetail({ table, onToggleActive, onEdit, onClose }) {
 
 const TABLE_SIZE_OPTIONS = [["small", "Small (2-top)"], ["medium", "Medium (4-top)"], ["large", "Large (6-top)"], ["xl", "XL / Private (8+)"]];
 
-function AddTableModal({ floors, onClose, onSaved }) {
-  const [form, setForm] = useState({ code: "", displayName: "", capacity: 4, tableType: "standard", sizeLabel: "medium", floorId: floors?.[0]?.id || "", shareable: false });
+function AddTableModal({ floors, defaultFloorId, onClose, onSaved }) {
+  const [form, setForm] = useState({ code: "", displayName: "", capacity: 4, tableType: "standard", sizeLabel: "medium", floorId: defaultFloorId || floors?.[0]?.id || "", shareable: false });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -1222,12 +1265,18 @@ function EditConfigurationItemsModal({ config, items, onClose, onSaved }) {
   );
 }
 
+const SLOT_LABELS = { morning: "Morning", midday: "Mid-day", evening: "Evening" };
+const SLOT_MODE_BADGE = { default: "completed", configuration: "active", custom: "pending", closed: "cancelled" };
+const SLOT_MODE_LABEL = { default: "Default", configuration: "Configured", custom: "Custom", closed: "Closed" };
+
 function MenuCalendarPanel({ notify }) {
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [schedule, setSchedule] = useState(null);
   const [configs, setConfigs] = useState([]);
+  const [items, setItems] = useState([]);
   const [slots, setSlots] = useState([]);
   const [selectedDate, setSelectedDate] = useState(null);
+  const todayIso = new Date().toISOString().slice(0, 10);
 
   const from = `${month}-01`;
   const to = new Date(new Date(`${from}T00:00:00Z`).getUTCFullYear(), new Date(`${from}T00:00:00Z`).getUTCMonth() + 1, 0).toISOString().slice(0, 10);
@@ -1235,6 +1284,7 @@ function MenuCalendarPanel({ notify }) {
   const load = useCallback(() => {
     apiFetch(`/api/menu/schedule?from=${from}&to=${to}`).then(setSchedule).catch(() => setSchedule([]));
     apiFetch("/api/menu/configurations").then(setConfigs).catch(() => {});
+    apiFetch("/api/menu/items").then(setItems).catch(() => {});
     apiFetch("/api/menu/daily-slots").then(setSlots).catch(() => {});
   }, [from, to]);
   useEffect(() => { load(); }, [load]);
@@ -1249,39 +1299,41 @@ function MenuCalendarPanel({ notify }) {
 
   return (
     <div>
-      <div className="card" style={{ marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <button className="button secondary small" onClick={() => setMonth((m) => addMonths(m, -1))}>&larr; Prev</button>
-        <strong>{new Date(`${from}T00:00:00Z`).toLocaleDateString(undefined, { month: "long", year: "numeric" })}</strong>
-        <button className="button secondary small" onClick={() => setMonth((m) => addMonths(m, 1))}>Next &rarr;</button>
+      <div className="card" style={{ marginBottom: 16, maxWidth: 420 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <button className="button secondary small" onClick={() => setMonth((m) => addMonths(m, -1))}>&larr;</button>
+          <strong style={{ fontSize: 13.5 }}>{new Date(`${from}T00:00:00Z`).toLocaleDateString(undefined, { month: "long", year: "numeric" })}</strong>
+          <button className="button secondary small" onClick={() => setMonth((m) => addMonths(m, 1))}>&rarr;</button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+          {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+            <div key={i} style={{ textAlign: "center", fontSize: 10, fontWeight: 700, color: "var(--muted)" }}>{d}</div>
+          ))}
+          {cells.map((day, i) => {
+            if (!day) return <div key={`blank-${i}`} />;
+            const iso = `${month}-${String(day).padStart(2, "0")}`;
+            const scheduled = scheduleByDate.get(iso);
+            const isPast = iso < todayIso;
+            return (
+              <button key={iso} onClick={() => setSelectedDate(iso)}
+                style={{
+                  aspectRatio: "1", borderRadius: 8, border: `1px solid ${scheduled ? "var(--brand)" : "var(--line)"}`,
+                  background: scheduled ? "var(--brand-soft)" : "#fff", cursor: "pointer", padding: 2, opacity: isPast ? 0.45 : 1,
+                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontSize: 11.5, fontWeight: 600
+                }}>
+                {day}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6, marginBottom: 20 }}>
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-          <div key={d} style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>{d}</div>
-        ))}
-        {cells.map((day, i) => {
-          if (!day) return <div key={`blank-${i}`} />;
-          const iso = `${month}-${String(day).padStart(2, "0")}`;
-          const scheduled = scheduleByDate.get(iso);
-          return (
-            <button key={iso} onClick={() => setSelectedDate(iso)}
-              style={{
-                aspectRatio: "1", borderRadius: "var(--radius-sm)", border: `1px solid ${scheduled ? "var(--brand)" : "var(--line)"}`,
-                background: scheduled ? "var(--brand-soft)" : "#fff", cursor: "pointer", padding: 4,
-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2
-              }}>
-              <span style={{ fontSize: 12.5, fontWeight: 600 }}>{day}</span>
-              {scheduled && <span style={{ fontSize: 9, color: "var(--brand-dark)", textAlign: "center", lineHeight: 1.2 }}>{scheduled.configuration_name}</span>}
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="cardHint">Click any date to see its Morning / Mid-day / Evening availability and assign a saved configuration.</div>
+      <div className="cardHint">Click any date to configure Morning / Mid-day / Evening separately -- each slot can have its own menu or be closed.</div>
 
       {selectedDate && (
         <DayScheduleModal
-          date={selectedDate} slots={slots} configs={configs} scheduled={scheduleByDate.get(selectedDate)}
+          date={selectedDate} slots={slots} configs={configs} items={items} isPast={selectedDate < todayIso}
           onClose={() => setSelectedDate(null)}
           onChanged={() => { load(); notify("Schedule updated"); }}
         />
@@ -1296,86 +1348,121 @@ function addMonths(yyyyMm, delta) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-function DayScheduleModal({ date, slots, configs, scheduled, onClose, onChanged }) {
-  const [menu, setMenu] = useState(null);
-  const [assigning, setAssigning] = useState(false);
-  const [configId, setConfigId] = useState(scheduled?.configuration_id || "");
+function DayScheduleModal({ date, slots, configs, items, isPast, onClose, onChanged }) {
+  const [day, setDay] = useState(null);
+  const [activeSlot, setActiveSlot] = useState("morning");
+  const [draftItemIds, setDraftItemIds] = useState([]);
+  const [configId, setConfigId] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    apiFetch(`/api/menu/schedule?date=${date}`).then(setMenu).catch(() => setMenu({ items: [] }));
-  }, [date]);
+  const load = useCallback(() => {
+    apiFetch(`/api/menu/day-schedule?date=${date}`).then((data) => {
+      setDay(data);
+      const resolved = data.resolved[activeSlot];
+      setDraftItemIds((resolved.items || []).map((i) => i.id));
+      setConfigId(data.schedule[activeSlot].configurationId || "");
+    }).catch(() => {});
+  }, [date, activeSlot]);
+  useEffect(() => { load(); }, [load]);
 
-  const bySlot = { morning: [], midday: [], evening: [] };
-  (menu?.items || []).forEach((item) => {
-    (item.meal_periods || []).forEach((p) => { if (bySlot[p]) bySlot[p].push(item); });
-  });
+  function toggleItem(id) {
+    setDraftItemIds((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
+  }
 
-  async function assign() {
+  async function loadFromConfiguration(id) {
+    setConfigId(id);
+    const config = configs.find((c) => String(c.id) === String(id));
+    if (config) setDraftItemIds(config.item_ids.map(Number));
+  }
+
+  async function saveConfiguration() {
     if (!configId) return;
-    setAssigning(true);
+    setSaving(true);
     try {
-      await apiFetch(`/api/menu/configurations/${configId}`, { method: "PATCH", body: JSON.stringify({ action: "assign_dates", dates: [date] }) });
+      await apiFetch("/api/menu/day-schedule", { method: "PATCH", body: JSON.stringify({ date, slot: activeSlot, action: "assign_configuration", configurationId: Number(configId) }) });
       onChanged();
-      onClose();
-    } catch (e) {
-      alert(e.message);
-    } finally { setAssigning(false); }
+      load();
+    } catch (e) { alert(e.message); } finally { setSaving(false); }
   }
 
-  async function clearDay() {
-    await fetch(`/api/menu/schedule?date=${date}`, { method: "DELETE", headers: { Authorization: `Bearer ${localStorage.getItem("pp_token")}` } });
-    onChanged();
-    onClose();
+  async function saveCustomItems() {
+    setSaving(true);
+    try {
+      await apiFetch("/api/menu/day-schedule", { method: "PATCH", body: JSON.stringify({ date, slot: activeSlot, action: "set_items", itemIds: draftItemIds, configurationId: configId ? Number(configId) : null }) });
+      onChanged();
+      load();
+    } catch (e) { alert(e.message); } finally { setSaving(false); }
   }
 
-  const slotLabels = { morning: "Morning", midday: "Mid-day", evening: "Evening" };
+  async function toggleClosed(closed) {
+    setSaving(true);
+    try {
+      await apiFetch("/api/menu/day-schedule", { method: "PATCH", body: JSON.stringify({ date, slot: activeSlot, action: "set_closed", closed }) });
+      onChanged();
+      load();
+    } catch (e) { alert(e.message); } finally { setSaving(false); }
+  }
+
   const slotTimes = Object.fromEntries(slots.map((s) => [s.slot, `${s.start_time?.slice(0, 5)}-${s.end_time?.slice(0, 5)}`]));
+  const slotState = day?.schedule[activeSlot];
+  const closed = slotState?.mode === "closed";
 
   return (
     <div className="modalOverlay" onClick={onClose}>
-      <div className="modalCard" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+      <div className="modalCard" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 600 }}>
         <div className="modalHeader">
           <h3>{new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</h3>
           <button className="button ghost small" onClick={onClose}><X size={14} /></button>
         </div>
 
-        <div className="cardHint" style={{ marginBottom: 14 }}>
-          {menu?.source === "configuration" ? "Showing the assigned configuration's items." : "No configuration assigned -- showing the default menu."}
-        </div>
+        {isPast ? (
+          <div className="cardHint" style={{ background: "var(--line-soft)", padding: 10, borderRadius: 10 }}>This date is in the past and cannot be edited.</div>
+        ) : !day ? <LoadingBlock /> : (
+          <>
+            <div className="tabRow">
+              {["morning", "midday", "evening"].map((slot) => (
+                <button key={slot} className={`tabChip ${activeSlot === slot ? "active" : ""}`} onClick={() => setActiveSlot(slot)}>
+                  {SLOT_LABELS[slot]} <span className="cardHint">({slotTimes[slot]})</span>
+                </button>
+              ))}
+            </div>
 
-        {!menu ? <LoadingBlock /> : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 18 }}>
-            {["morning", "midday", "evening"].map((slot) => (
-              <div key={slot}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                  <strong style={{ fontSize: 13 }}>{slotLabels[slot]}</strong>
-                  <span className="cardHint">{slotTimes[slot]}</span>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <span className={`badge ${SLOT_MODE_BADGE[slotState?.mode]}`}>{SLOT_MODE_LABEL[slotState?.mode]}</span>
+              <button className={`button small ${closed ? "danger" : "secondary"}`} onClick={() => toggleClosed(!closed)} disabled={saving}>
+                {closed ? "Reopen this slot" : "Mark slot closed"}
+              </button>
+            </div>
+
+            {!closed && (
+              <>
+                <div className="field" style={{ marginBottom: 12 }}>
+                  <label>Quick-fill from a configuration</label>
+                  <select className="select" value={configId} onChange={(e) => loadFromConfiguration(e.target.value)}>
+                    <option value="">Pick items manually...</option>
+                    {configs.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
                 </div>
-                {bySlot[slot].length === 0 ? (
-                  <p className="cardHint">Nothing available in this slot.</p>
-                ) : (
-                  <div className="pillRow">
-                    {bySlot[slot].map((item) => <span key={item.id} className="pill">{item.name}</span>)}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+
+                <div style={{ maxHeight: 280, overflowY: "auto", display: "flex", flexDirection: "column", gap: 5, marginBottom: 14, border: "1px solid var(--line)", borderRadius: "var(--radius-sm)", padding: 8 }}>
+                  {items.map((item) => (
+                    <label key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", fontSize: 13 }}>
+                      <input type="checkbox" checked={draftItemIds.includes(item.id)} onChange={() => toggleItem(item.id)} />
+                      <span style={{ flex: 1 }}>{item.name}</span>
+                      <span className="cardHint">${(item.price_cents / 100).toFixed(2)}</span>
+                    </label>
+                  ))}
+                </div>
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  {configId && <button className="button secondary small" onClick={saveConfiguration} disabled={saving}>Use configuration as-is</button>}
+                  <button className="button primary small" onClick={saveCustomItems} disabled={saving}>{saving ? "Saving..." : `Save ${draftItemIds.length} item${draftItemIds.length === 1 ? "" : "s"} for ${SLOT_LABELS[activeSlot]}`}</button>
+                </div>
+              </>
+            )}
+          </>
         )}
 
-        <div className="formGrid one">
-          <div className="field">
-            <label>Assign a configuration to this date</label>
-            <select className="select" value={configId} onChange={(e) => setConfigId(e.target.value)}>
-              <option value="">Select a configuration...</option>
-              {configs.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="button primary small" onClick={assign} disabled={!configId || assigning}>{assigning ? "Assigning..." : "Assign"}</button>
-            {scheduled && <button className="button ghost small" onClick={clearDay}>Remove assignment</button>}
-          </div>
-        </div>
       </div>
     </div>
   );
