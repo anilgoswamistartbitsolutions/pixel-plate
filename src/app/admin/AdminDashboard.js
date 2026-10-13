@@ -316,13 +316,18 @@ function FloorDetailView({ floor, tables, isSuperAdmin, notify, onBack, onReload
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState(null);
   const [editMode, setEditMode] = useState(false);
-  const [showInactive, setShowInactive] = useState(false);
   const [localTables, setLocalTables] = useState(tables);
 
-  useEffect(() => { setLocalTables(tables); }, [tables]);
+  useEffect(() => {
+    setLocalTables(tables);
+    // The side panel (TableDetail) was holding onto the table object from before the edit --
+    // re-point it at the fresh copy by id so an edit/toggle is reflected immediately instead
+    // of only updating the canvas while the panel still shows stale data.
+    setSelected((prev) => (prev ? tables.find((t) => t.id === prev.id) || null : null));
+  }, [tables]);
 
   const inactiveCount = localTables.filter((t) => !t.active).length;
-  const visibleTables = showInactive ? localTables : localTables.filter((t) => t.active);
+  const visibleTables = localTables.filter((t) => t.active);
 
   async function toggleActive(table) {
     try {
@@ -371,11 +376,6 @@ function FloorDetailView({ floor, tables, isSuperAdmin, notify, onBack, onReload
         <span><span className="legendDot" style={{ background: "#fff", border: "2px solid var(--line)" }} />Available</span>
         <span><span className="legendDot" style={{ background: "#fbeedb", border: "2px solid var(--amber)" }} />Reserved upcoming</span>
         <span><span className="legendDot" style={{ background: "var(--danger-soft)", border: "2px solid var(--danger)" }} />Occupied now</span>
-        {inactiveCount > 0 && (
-          <button className="button ghost small" onClick={() => setShowInactive((v) => !v)} style={{ marginLeft: "auto" }}>
-            {showInactive ? "Hide" : "Show"} {inactiveCount} inactive table{inactiveCount === 1 ? "" : "s"}
-          </button>
-        )}
       </div>
 
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -401,6 +401,24 @@ function FloorDetailView({ floor, tables, isSuperAdmin, notify, onBack, onReload
           )}
         </div>
       </div>
+
+      {inactiveCount > 0 && (
+        <div className="card" style={{ marginTop: 20 }}>
+          <div className="cardTitle" style={{ marginBottom: 4 }}>Deactivated tables</div>
+          <p className="cardHint" style={{ marginBottom: 12 }}>Kept off the floor plan but never deleted, so past reservations stay intact. Reactivate to bring one back.</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {localTables.filter((t) => !t.active).map((t) => (
+              <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", border: "1px solid var(--line)", borderRadius: "var(--radius-sm)", background: "var(--line-soft)" }}>
+                <div>
+                  <strong style={{ fontSize: 13.5 }}>{t.code} -- {t.display_name}</strong>
+                  <div className="cardHint">{t.capacity} seats &middot; {titleCase(t.table_type)}</div>
+                </div>
+                <button className="button secondary small" onClick={() => toggleActive(t)}>Reactivate</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {showAdd && <AddTableModal floors={[floor]} defaultFloorId={floor?.id} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); notify("Table created"); onReload(); }} />}
       {editing && <EditTableModal table={editing} floors={[floor]} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); notify("Table updated"); onReload(); }} />}
@@ -457,10 +475,26 @@ function DraggableTable({ table, selected, onSelect, onDrag, draggable }) {
       style={{ left: `${table.pos_x}px`, top: `${table.pos_y}px`, width: `${table.width}px`, height: `${table.height}px`, cursor: draggable && table.active ? "grab" : "pointer" }}
       onMouseDown={onMouseDown}
     >
+      {renderChairs(table)}
       <span className="code">{table.code}</span>
       <span className="cap">{table.capacity} seats</span>
     </div>
   );
+}
+
+/** One chair per seat, ringed evenly around the table's actual footprint -- so a 6-top
+ * visibly has six chairs around it, not just a capacity number in the corner. */
+function renderChairs(table) {
+  const width = Number(table.width);
+  const height = Number(table.height);
+  const rx = width / 2 + 11;
+  const ry = height / 2 + 11;
+  return Array.from({ length: table.capacity }, (_, i) => {
+    const angle = (i / table.capacity) * Math.PI * 2 - Math.PI / 2;
+    const x = width / 2 + rx * Math.cos(angle);
+    const y = height / 2 + ry * Math.sin(angle);
+    return <span key={i} className="chairDot" style={{ left: `${x - 6}px`, top: `${y - 6}px` }} />;
+  });
 }
 
 function TableDetail({ table, onToggleActive, onEdit, onDelete, onClose }) {

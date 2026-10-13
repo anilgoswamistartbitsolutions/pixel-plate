@@ -49,11 +49,14 @@ export async function listFloorPlan(restaurantId) {
 
 // Size (seating capacity tier) and shape (how it's drawn) are independent -- a table's
 // physical footprint is the size's base box, adjusted for the chosen shape.
+// Clearly rectangular (not square) at every size for the default "rect" shape -- "round"
+// below squares these up on purpose, since a circular table reads correctly as equal
+// width/height, but a rectangular one should visibly look like an elongated table.
 const SIZE_DIMENSIONS = {
-  small: { width: 90, height: 90 },
-  medium: { width: 120, height: 90 },
-  large: { width: 160, height: 110 },
-  xl: { width: 220, height: 140 }
+  small: { width: 100, height: 64 },
+  medium: { width: 140, height: 84 },
+  large: { width: 180, height: 104 },
+  xl: { width: 240, height: 130 }
 };
 
 export function dimensionsForShape(sizeLabel, shape) {

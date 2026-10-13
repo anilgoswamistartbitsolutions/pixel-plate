@@ -219,17 +219,25 @@ a { color: var(--brand-dark); text-decoration: none; }
 .floorCanvasWrap { position: relative; background: #fff; border-radius: var(--radius); border: 1px solid var(--line); overflow: auto; box-shadow: var(--shadow-sm); }
 .floorCanvas { position: relative; width: 740px; height: 540px; background-image: radial-gradient(circle, #f0e5d5 1.2px, transparent 1.2px); background-size: 24px 24px; }
 .floorTable {
-  position: absolute; border-radius: 14px; border: 2px solid var(--line); background: #fdfbf7;
+  position: absolute; border-radius: 8px; border: 2px solid var(--line); background: #fdfbf7;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  cursor: grab; box-shadow: var(--shadow-sm); user-select: none; transition: box-shadow .18s, transform .18s, border-color .18s;
+  cursor: grab; box-shadow: var(--shadow-sm), inset 0 0 0 4px #fff; user-select: none;
+  transition: box-shadow .18s, transform .18s, border-color .18s;
 }
-.floorTable:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
+.floorTable:hover { box-shadow: var(--shadow), inset 0 0 0 4px #fff; transform: translateY(-1px); }
 .floorTable.round, .floorTable.oval_h, .floorTable.oval_v { border-radius: 50%; }
 .floorTable.occupied { border-color: var(--danger); background: var(--danger-soft); }
 .floorTable.reserved { border-color: var(--amber); background: var(--amber-soft); }
 .floorTable.inactive { border-color: #cfc5b7; background: #f1ece3; opacity: .6; cursor: default; }
 .floorTable.selected { box-shadow: 0 0 0 4px var(--brand-soft); border-color: var(--brand); }
 .floorTable .code { font-weight: 700; font-size: 14px; color: var(--ink); }
+.chairDot {
+  position: absolute; width: 12px; height: 12px; border-radius: 4px;
+  background: #e4d4ba; border: 1.5px solid #c9b48c; pointer-events: none;
+}
+.floorTable.occupied .chairDot { background: #f3c9c2; border-color: var(--danger); }
+.floorTable.reserved .chairDot { background: #f6ddab; border-color: var(--amber); }
+.floorTable.inactive .chairDot { opacity: .5; }
 .floorTable .cap { font-size: 10.5px; color: var(--muted); }
 
 /* ---------------------------------------------------------------- Switches */
