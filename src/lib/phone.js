@@ -1,35 +1,33 @@
-/**
- * Phone numbers arrive in every shape a human or a speech-to-text engine can produce:
- * "+1 (310) 555-0142", "310.555.0142", "+91 98765 43210", "9876543210". Everything is stored
- * in one canonical form -- digits only, keeping a leading + when the caller gave a country
- * code -- so the same person is never written twice under two spellings, and so the lookups
- * guests use on the phone ("it's the number ending four two") match reliably.
- */
-
-/** Canonical storage form: no spaces, brackets, dashes or dots. "+1 (310) 555-0142" -> "+13105550142". */
-export function normalizePhone(input) {
-  if (input === null || input === undefined) return null;
-  const raw = String(input).trim();
-  if (!raw) return null;
-  const digits = raw.replace(/\D/g, "");
-  if (!digits) return null;
-  // A leading 00 is the international prefix written out -- treat it as a +.
-  if (raw.startsWith("+") || digits.startsWith("00")) {
-    return `+${digits.replace(/^00/, "")}`;
-  }
+// Accepts Indian and US/Canada numbers (and general E.164) without guessing or forcing a
+// country code -- a bare 10-digit number is kept exactly as typed rather than assumed Indian,
+// so a US guest's number isn't silently rewritten to +91.
+export function normalizePhone(value) {
+  const compact = String(value ?? "").replace(/[\s()-.]/g, "");
+  if (!compact) return "";
+  if (compact.startsWith("+")) return `+${compact.slice(1).replace(/\D/g, "")}`;
+  const digits = compact.replace(/\D/g, "");
+  // Indian trunk-prefix form (0 + 10 digits) -- the only case where the leading digit is not
+  // part of the actual number, so stripping it is safe and keeps the number comparable.
+  if (/^0\d{10}$/.test(digits)) return digits.slice(1);
   return digits;
 }
 
+export function isValidPhone(value) {
+  const normalized = normalizePhone(value).replace(/^\+/, "");
+  return /^\d{7,15}$/.test(normalized);
+}
+
 /** Just the digits, country code and all -- for comparisons. */
-export function phoneDigits(input) {
-  return String(input ?? "").replace(/\D/g, "");
+export function phoneDigits(value) {
+  return String(value ?? "").replace(/\D/g, "");
 }
 
 /**
- * Do two numbers identify the same caller? Compares the last 10 digits when both have at
- * least that many (so a number given with a country code still matches one stored without),
- * and otherwise falls back to the shorter length. Used to verify a caller before any booking
- * or order detail is read back to them.
+ * Do two numbers identify the same caller? Compares the last 10 digits when both have at least
+ * that many, so a number given with a country code still matches one stored without it, and
+ * falls back to the shorter length otherwise. Returns false when either side is missing, which
+ * is what makes the phone genuinely required: a lookup with no phone fails verification rather
+ * than skipping the check.
  */
 export function phonesMatch(a, b) {
   const da = phoneDigits(a);
