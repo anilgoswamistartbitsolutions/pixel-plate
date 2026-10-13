@@ -2201,41 +2201,119 @@ function AddExtraInfoModal({ onClose, onSaved }) {
 
 const WEEKDAY_LABELS = [["mon", "Monday"], ["tue", "Tuesday"], ["wed", "Wednesday"], ["thu", "Thursday"], ["fri", "Friday"], ["sat", "Saturday"], ["sun", "Sunday"]];
 
-// Normalizes a day's stored shape (old single {open,close,closed}, or already {closed,windows})
-// into { closed, windows: [{open,close}, ...] } so the editor always has a list to render,
-// even for restaurants whose hours were saved before multi-window support.
-function normalizeDayHours(day) {
-  if (!day) return { closed: false, windows: [{ open: "11:00", close: "22:00" }] };
-  if (Array.isArray(day.windows)) return { closed: !!day.closed, windows: day.windows.length ? day.windows : [{ open: "11:00", close: "22:00" }] };
-  if (day.open && day.close) return { closed: !!day.closed, windows: [{ open: day.open, close: day.close }] };
-  return { closed: !!day.closed, windows: [{ open: "11:00", close: "22:00" }] };
+const HOUR_SHIFTS = ["morning", "midday", "evening"];
+const SHIFT_FALLBACK_TIMES = {
+  morning: { open: "09:00", close: "12:00" },
+  midday: { open: "13:00", close: "16:00" },
+  evening: { open: "18:00", close: "22:00" }
+};
+
+function toMin(hhmm) { const [h, m] = String(hhmm).split(":").map(Number); return h * 60 + m; }
+function toHhmm(total) { return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`; }
+
+/**
+ * Opening hours are edited as the same three shifts the rest of the app runs on. A day is
+ * { closed, windows: [{slot, open, close}] } holding only the shifts that are actually open.
+ * Hours saved before this (one flat {open,close}, or unlabelled windows) are mapped onto the
+ * shifts by intersecting them with each shift's time range, so a legacy 11:00-22:30 day keeps
+ * its real hours (morning becomes 11:00-12:00) instead of silently claiming a 09:00 open.
+ */
+function normalizeDayHours(day, slotTimes) {
+  const defaults = (slot) => slotTimes?.[slot] || SHIFT_FALLBACK_TIMES[slot];
+  const blank = () => HOUR_SHIFTS.map((slot) => ({ slot, ...defaults(slot), enabled: false }));
+
+  if (!day) return { closed: false, shifts: HOUR_SHIFTS.map((slot) => ({ slot, ...defaults(slot), enabled: true })) };
+  if (day.closed) return { closed: true, shifts: blank() };
+
+  const windows = Array.isArray(day.windows) && day.windows.length
+    ? day.windows
+    : (day.open && day.close ? [{ open: day.open, close: day.close }] : []);
+
+  // Already shift-labelled -- use as-is.
+  if (windows.some((w) => w.slot)) {
+    return {
+      closed: false,
+      shifts: HOUR_SHIFTS.map((slot) => {
+        const match = windows.find((w) => w.slot === slot);
+        return match ? { slot, open: match.open, close: match.close, enabled: true } : { slot, ...defaults(slot), enabled: false };
+      })
+    };
+  }
+
+  if (windows.length === 0) return { closed: false, shifts: blank() };
+
+  return {
+    closed: false,
+    shifts: HOUR_SHIFTS.map((slot) => {
+      const base = defaults(slot);
+      const shiftStart = toMin(base.open);
+      const shiftEnd = toMin(base.close);
+      let open = null;
+      let close = null;
+      for (const w of windows) {
+        const lo = Math.max(shiftStart, toMin(w.open));
+        const hi = Math.min(shiftEnd, toMin(w.close));
+        if (lo < hi) {
+          open = open === null ? lo : Math.min(open, lo);
+          close = close === null ? hi : Math.max(close, hi);
+        }
+      }
+      return open === null
+        ? { slot, ...base, enabled: false }
+        : { slot, open: toHhmm(open), close: toHhmm(close), enabled: true };
+    })
+  };
+}
+
+/** Editor state -> what gets stored: only the open shifts, as labelled windows. */
+function hoursForSave(hours) {
+  const out = {};
+  for (const [key] of WEEKDAY_LABELS) {
+    const day = hours[key];
+    const open = day.shifts.filter((s) => s.enabled);
+    out[key] = day.closed || open.length === 0
+      ? { closed: true, windows: [] }
+      : { closed: false, windows: open.map((s) => ({ slot: s.slot, open: s.open, close: s.close })) };
+  }
+  return out;
 }
 
 function ProfileForm({ settings, onSave }) {
   const [form, setForm] = useState({ address: settings.address || "", phone: settings.phone || "", total_seating_capacity: settings.total_seating_capacity || 0, description: settings.description || "" });
-  const [hours, setHours] = useState(() => {
+  const [slotTimes, setSlotTimes] = useState(null);
+  const [hours, setHours] = useState(null);
+
+  // Each day's three shifts default to the restaurant's configured serving windows, so hours
+  // and the menu/takeaway shifts line up instead of being maintained as two separate ideas.
+  useEffect(() => {
+    apiFetch("/api/menu/daily-slots").then((rows) => {
+      const times = {};
+      for (const r of rows) times[r.slot] = { open: String(r.start_time).slice(0, 5), close: String(r.end_time).slice(0, 5) };
+      setSlotTimes(times);
+    }).catch(() => setSlotTimes({}));
+  }, []);
+
+  useEffect(() => {
+    if (!slotTimes) return;
     const normalized = {};
-    for (const [key] of WEEKDAY_LABELS) normalized[key] = normalizeDayHours((settings.opening_hours || {})[key]);
-    return normalized;
-  });
+    for (const [key] of WEEKDAY_LABELS) normalized[key] = normalizeDayHours((settings.opening_hours || {})[key], slotTimes);
+    setHours(normalized);
+  }, [slotTimes, settings.opening_hours]);
 
   function setDay(key, patch) {
     setHours((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
   }
-  function setWindow(key, idx, patch) {
-    setHours((prev) => ({ ...prev, [key]: { ...prev[key], windows: prev[key].windows.map((w, i) => (i === idx ? { ...w, ...patch } : w)) } }));
-  }
-  function addWindow(key) {
-    setHours((prev) => ({ ...prev, [key]: { ...prev[key], windows: [...prev[key].windows, { open: "17:00", close: "22:00" }] } }));
-  }
-  function removeWindow(key, idx) {
-    setHours((prev) => ({ ...prev, [key]: { ...prev[key], windows: prev[key].windows.filter((_, i) => i !== idx) } }));
+  function setShift(key, slot, patch) {
+    setHours((prev) => ({
+      ...prev,
+      [key]: { ...prev[key], shifts: prev[key].shifts.map((s) => (s.slot === slot ? { ...s, ...patch } : s)) }
+    }));
   }
   function copyToAllDays(key) {
     const source = hours[key];
     setHours((prev) => {
       const next = { ...prev };
-      for (const [k] of WEEKDAY_LABELS) next[k] = { closed: source.closed, windows: source.windows.map((w) => ({ ...w })) };
+      for (const [k] of WEEKDAY_LABELS) next[k] = { closed: source.closed, shifts: source.shifts.map((s) => ({ ...s })) };
       return next;
     });
   }
@@ -2250,45 +2328,55 @@ function ProfileForm({ settings, onSave }) {
       </div>
 
       <div className="cardTitle" style={{ marginBottom: 4 }}>Opening hours</div>
-      <p className="cardHint" style={{ marginBottom: 14 }}>Add more than one window on a day (e.g. lunch 11:00-14:00, then closed, then dinner 17:00-22:00) for a midday break between services.</p>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
-        {WEEKDAY_LABELS.map(([key, label]) => {
-          const day = hours[key];
-          return (
-            <div key={key} style={{ border: "1px solid var(--line)", borderRadius: "var(--radius-sm)", padding: "10px 12px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                <span style={{ width: 90, fontSize: 13, fontWeight: 700 }}>{label}</span>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--muted)" }}>
-                  <input type="checkbox" checked={!day.closed} onChange={(e) => setDay(key, { closed: !e.target.checked })} />Open
-                </label>
-                {!day.closed && (
-                  <button type="button" className="button ghost small" onClick={() => copyToAllDays(key)} title="Copy this day's hours to every other day">Copy to all days</button>
-                )}
-              </div>
+      <p className="cardHint" style={{ marginBottom: 14 }}>
+        Each day runs as three shifts -- Morning, Mid-day and Evening -- starting from your configured serving times.
+        Untick a shift to close just that part of the day (e.g. open for lunch and dinner but not breakfast).
+      </p>
 
-              {!day.closed && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
-                  {day.windows.map((w, idx) => (
-                    <div key={idx} style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 90 }}>
-                      <input className="textInput" type="time" value={w.open} onChange={(e) => setWindow(key, idx, { open: e.target.value })} style={{ width: 120 }} />
-                      <span style={{ fontSize: 12, color: "var(--muted)" }}>to</span>
-                      <input className="textInput" type="time" value={w.close} onChange={(e) => setWindow(key, idx, { close: e.target.value })} style={{ width: 120 }} />
-                      {day.windows.length > 1 && (
-                        <button type="button" className="button ghost small" title="Remove this window" onClick={() => removeWindow(key, idx)}><X size={13} /></button>
-                      )}
+      {!hours ? <LoadingBlock /> : (
+        <>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+            {WEEKDAY_LABELS.map(([key, label]) => {
+              const day = hours[key];
+              const openShifts = day.shifts.filter((s) => s.enabled).length;
+              return (
+                <div key={key} style={{ border: "1px solid var(--line)", borderRadius: "var(--radius-sm)", padding: "10px 12px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <span style={{ width: 90, fontSize: 13, fontWeight: 700 }}>{label}</span>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--muted)" }}>
+                      <input type="checkbox" checked={!day.closed} onChange={(e) => setDay(key, { closed: !e.target.checked })} />Open
+                    </label>
+                    {!day.closed && (
+                      <>
+                        <span className="cardHint">{openShifts} of 3 shifts open</span>
+                        <button type="button" className="button ghost small" onClick={() => copyToAllDays(key)} title="Copy this day's hours to every other day">Copy to all days</button>
+                      </>
+                    )}
+                  </div>
+
+                  {!day.closed && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+                      {day.shifts.map((s) => (
+                        <div key={s.slot} style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 90, flexWrap: "wrap", opacity: s.enabled ? 1 : 0.55 }}>
+                          <label style={{ display: "flex", alignItems: "center", gap: 6, width: 120, fontSize: 12.5 }}>
+                            <input type="checkbox" checked={s.enabled} onChange={(e) => setShift(key, s.slot, { enabled: e.target.checked })} />
+                            {SLOT_ICONS[s.slot]} {SLOT_LABELS[s.slot]}
+                          </label>
+                          <input className="textInput" type="time" disabled={!s.enabled} value={s.open} onChange={(e) => setShift(key, s.slot, { open: e.target.value })} style={{ width: 120 }} />
+                          <span style={{ fontSize: 12, color: "var(--muted)" }}>to</span>
+                          <input className="textInput" type="time" disabled={!s.enabled} value={s.close} onChange={(e) => setShift(key, s.slot, { close: e.target.value })} style={{ width: 120 }} />
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                  <button type="button" className="button secondary small" style={{ marginLeft: 90, alignSelf: "flex-start" }} onClick={() => addWindow(key)}>
-                    <Plus size={13} />Add another window
-                  </button>
+                  )}
                 </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+              );
+            })}
+          </div>
 
-      <button className="button primary" onClick={() => onSave({ ...form, opening_hours: hours })}>Save profile & hours</button>
+          <button className="button primary" onClick={() => onSave({ ...form, opening_hours: hoursForSave(hours) })}>Save profile &amp; hours</button>
+        </>
+      )}
     </div>
   );
 }

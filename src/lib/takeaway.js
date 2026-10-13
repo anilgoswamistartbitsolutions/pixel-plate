@@ -1,6 +1,7 @@
 import { query, withTransaction } from "@/lib/db";
 import { getSettings, getBookingRules, isWithinOpeningHours, windowsForDate } from "@/lib/restaurant";
 import { getDailySlots } from "@/lib/floors";
+import { normalizePhone, phonesMatch } from "@/lib/phone";
 
 export class TakeawayError extends Error {
   constructor(message, code = "takeaway_failed") {
@@ -164,6 +165,7 @@ async function checkConcurrencyLimit(restaurantId) {
 export async function createTakeawayOrder({ restaurantId, customerName, phone, lines, requestedSlot, requestedTime, notes, source = "staff", createdByStaffId = null }) {
   if (!customerName?.trim()) throw new TakeawayError("Customer name is required.", "validation");
   if (!phone?.trim()) throw new TakeawayError("A contact phone number is required.", "validation");
+  phone = normalizePhone(phone);
 
   await checkConcurrencyLimit(restaurantId);
   const resolvedTime = await validatePickupTime(restaurantId, requestedTime);
@@ -215,7 +217,8 @@ export async function getTakeawayStatus({ restaurantId, orderRef, phone }) {
   const result = await query("select * from takeaway_orders where restaurant_id = $1 and order_ref = $2", [restaurantId, orderRef]);
   const order = result.rows[0];
   if (!order) return null;
-  if (phone && order.phone.replace(/\D/g, "").slice(-6) !== String(phone).replace(/\D/g, "").slice(-6)) {
+  // Required, not optional -- see the matching note in reservations.js getReservationStatus.
+  if (!phonesMatch(order.phone, phone)) {
     return { verificationFailed: true };
   }
   return order;

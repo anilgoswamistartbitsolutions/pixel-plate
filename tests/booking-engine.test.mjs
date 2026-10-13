@@ -107,19 +107,14 @@ async function run() {
       restaurantId: RESTAURANT_ID, customerName: `${MARKER} ModifyMe`, phone: "9000000030",
       partySize: 2, reservationDate: "2027-01-14", startTime: "19:00", seatingPreference: "together"
     });
-    // Fill every other seat at that exact time so there is nowhere for a modified, bigger
-    // party to go -- the modification must then fail without touching the original booking.
-    for (let i = 0; i < 20; i++) {
-      await createReservation({
-        restaurantId: RESTAURANT_ID, customerName: `${MARKER} Filler${i}`, phone: `900000004${i}`,
-        partySize: 2, reservationDate: "2027-01-14", startTime: "19:00", seatingPreference: "shared_ok"
-      }).catch(() => {});
-    }
+    // Ask for a party far larger than the whole restaurant can seat, so the modification has
+    // genuinely nowhere to go. (Filling the room with filler bookings no longer works as a
+    // setup -- there are 178 seats across nine floors.)
     let threw = false;
     try {
       await modifyReservation({
         restaurantId: RESTAURANT_ID, reservationId: booked.reservation.id,
-        changes: { partySize: 10 }, modifiedBy: "staff"
+        changes: { partySize: 500 }, modifiedBy: "staff"
       });
     } catch {
       threw = true;

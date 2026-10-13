@@ -1,6 +1,7 @@
 import { query, withTransaction } from "@/lib/db";
 import { createReservation, BookingError } from "@/lib/reservations";
 import { getBookingRules } from "@/lib/restaurant";
+import { normalizePhone } from "@/lib/phone";
 
 // "Leads" is the dashboard-facing name for this table -- it now handles every kind of
 // request that needs staff review before becoming a real booking: oversized parties the
@@ -37,7 +38,7 @@ export async function createGroupRequest({
     `insert into group_booking_requests
        (restaurant_id, customer_name, phone, party_size, requested_date, requested_time, seating_preference, notes, priority, lead_type, floor_id)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,
-    [restaurantId, customerName, phone, partySize || 1, requestedDate, requestedTime, seatingPreference || null, notes || null, priority, leadType, floorId]
+    [restaurantId, customerName, normalizePhone(phone), partySize || 1, requestedDate, requestedTime, seatingPreference || null, notes || null, priority, leadType, floorId]
   );
   return result.rows[0];
 }

@@ -1,6 +1,7 @@
 import { withTransaction, query } from "@/lib/db";
 import { planAllocation, sweepExpiredHolds, toWindow } from "@/lib/availability";
 import { getSettings, getBookingRules, isWithinOpeningHours } from "@/lib/restaurant";
+import { normalizePhone, phonesMatch } from "@/lib/phone";
 
 const EXCLUSION_VIOLATION = "23P01";
 
@@ -9,6 +10,18 @@ export class BookingError extends Error {
     super(message);
     this.code = code;
   }
+}
+
+/** pg hands back a `date` column as a Date object and a `time` column as "HH:MM:SS", while the
+ * booking helpers expect "YYYY-MM-DD" and "HH:MM". Interpolating the raw values produced an
+ * invalid date, which silently disabled the cancel/change deadline checks and made a
+ * date-only or party-size-only modification fail outright. */
+function toIsoDate(value) {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+}
+function toHhmm(value) {
+  return String(value).slice(0, 5);
 }
 
 /**
@@ -37,6 +50,9 @@ export async function createReservation({
 }) {
   if (!customerName?.trim()) throw new BookingError("Customer name is required.", "validation");
   if (!phone?.trim()) throw new BookingError("A contact phone number is required.", "validation");
+  // Stored in one canonical digits-only form so the same caller is never written twice.
+  phone = normalizePhone(phone);
+  altPhone = normalizePhone(altPhone);
   if (!partySize || partySize < 1) throw new BookingError("Party size must be at least 1.", "validation");
 
   const settings = await getSettings(restaurantId);
@@ -96,11 +112,14 @@ export async function createReservation({
       );
       const reservation = reservationResult.rows[0];
 
-      for (let i = 0; i < plan.seatIds.length; i++) {
+      for (const seatId of plan.seatIds) {
+        // table_id is read from the seat itself rather than positionally from plan.tableIds:
+        // seats and tables are different-length lists, so indexing one by the other's offset
+        // filed seats against tables they do not belong to on every split booking.
         await client.query(
           `insert into seat_allocations (restaurant_id, seat_id, table_id, reservation_id, status, start_at, end_at)
-           values ($1,$2,$3,$4,'active',$5,$6)`,
-          [restaurantId, plan.seatIds[i], plan.tableIds[plan.tableIds.length === 1 ? 0 : i] ?? plan.tableIds[0], reservation.id, startAt, endAt]
+           select $1, s.id, s.table_id, $3, 'active', $4, $5 from table_seats s where s.id = $2`,
+          [restaurantId, seatId, reservation.id, startAt, endAt]
         );
       }
 
@@ -127,7 +146,7 @@ export async function cancelReservation({ restaurantId, reservationId, reason, c
     if (existing.status === "completed") throw new BookingError("A completed reservation cannot be cancelled.", "invalid_state");
 
     if (cancelledBy === "voice_agent") {
-      const hoursUntil = (new Date(`${existing.reservation_date}T${existing.start_time}Z`) - new Date()) / 3600000;
+      const hoursUntil = (new Date(`${toIsoDate(existing.reservation_date)}T${toHhmm(existing.start_time)}:00Z`) - new Date()) / 3600000;
       if (hoursUntil < (rules?.cancellation_deadline_hours ?? 2)) {
         throw new BookingError(
           `This reservation is inside the ${rules?.cancellation_deadline_hours ?? 2}-hour cancellation window -- please have staff confirm the cancellation.`,
@@ -165,7 +184,7 @@ export async function modifyReservation({ restaurantId, reservationId, changes, 
     }
 
     if (modifiedBy === "voice_agent") {
-      const hoursUntil = (new Date(`${existing.reservation_date}T${existing.start_time}Z`) - new Date()) / 3600000;
+      const hoursUntil = (new Date(`${toIsoDate(existing.reservation_date)}T${toHhmm(existing.start_time)}:00Z`) - new Date()) / 3600000;
       if (hoursUntil < (rules?.modification_deadline_hours ?? 2)) {
         throw new BookingError(
           `This reservation is inside the ${rules?.modification_deadline_hours ?? 2}-hour change window -- please have staff make this change.`,
@@ -174,10 +193,20 @@ export async function modifyReservation({ restaurantId, reservationId, changes, 
       }
     }
 
-    const nextDate = changes.reservationDate || existing.reservation_date;
-    const nextTime = changes.startTime || existing.start_time;
+    const nextDate = changes.reservationDate || toIsoDate(existing.reservation_date);
+    const nextTime = toHhmm(changes.startTime || existing.start_time);
     const nextParty = changes.partySize || existing.party_size;
     const duration = existing.duration_minutes;
+
+    // The same threshold createReservation enforces: growing a booking past the auto-confirm
+    // limit is a large-group request and needs staff, otherwise the rule could be sidestepped
+    // by booking small and then modifying upwards.
+    if (nextParty > existing.party_size && (nextParty > rules.max_party_size_auto || nextParty >= rules.large_group_threshold)) {
+      throw new BookingError(
+        `A party of ${nextParty} needs staff review -- the original booking is unchanged.`,
+        "needs_staff"
+      );
+    }
 
     const hoursCheck = isWithinOpeningHours(settings, nextDate, nextTime, duration);
     if (!hoursCheck.ok) throw new BookingError(hoursCheck.reason, "closed");
@@ -226,7 +255,10 @@ export async function getReservationStatus({ restaurantId, bookingRef, phone }) 
   if (!reservation) return null;
   // Verification gate: a caller must know the phone on file. Never disclose another
   // guest's booking just because they guessed a reference number.
-  if (phone && reservation.phone.replace(/\D/g, "").slice(-6) !== String(phone).replace(/\D/g, "").slice(-6)) {
+  // The phone is REQUIRED, not optional: guarding on `phone && ...` meant a caller who simply
+  // omitted it skipped the check entirely and was handed the whole booking. phonesMatch
+  // returns false for a missing or empty number, so no phone now fails verification.
+  if (!phonesMatch(reservation.phone, phone)) {
     return { verificationFailed: true };
   }
   return reservation;

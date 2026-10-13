@@ -136,7 +136,15 @@ export const TOOLS = {
     const { startAt, endAt } = toWindow(date, time, rules?.reservation_duration_minutes || 90);
     const plan = await checkAvailability({ restaurantId, startAt, endAt, partySize, preference });
     return plan.ok
-      ? { available: true, seating_mode: plan.seatingMode, summary: plan.summary, requires_approval: plan.requiresApproval }
+      ? {
+          available: true,
+          seating_mode: plan.seatingMode,
+          summary: plan.summary,
+          requires_approval: plan.requiresApproval,
+          // True when the party asked to sit together but only fits across several tables --
+          // tell the guest that plainly and let them decide before booking.
+          split_required: !!plan.splitRequired
+        }
       : { available: false, reason: plan.reason };
   },
 

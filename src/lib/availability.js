@@ -86,7 +86,12 @@ export async function planAllocation({ client, restaurantId, startAt, endAt, par
     }
     const seatIds = chosen.flatMap(({ table, count }) => table.freeSeats.slice(0, count).map((s) => s.id));
     const tableIds = chosen.map(({ table }) => table.id);
-    const fullTableAny = chosen.some(({ table, count }) => count === table.seats.length);
+    // A table filled to capacity only needs review when that table is actually flagged for it.
+    // Checking "is any table full" alone sent ordinary bookings to staff review, because most
+    // tables here seat two or three and any normal party fills one.
+    const fullTableNeedingApproval = chosen.some(
+      ({ table, count }) => count === table.seats.length && table.full_table_requires_approval
+    );
     return {
       ok: true,
       seatingMode: tableIds.length > 1 ? "combined" : (chosen[0].count === chosen[0].table.seats.length ? "full_table" : "partial"),
@@ -95,7 +100,7 @@ export async function planAllocation({ client, restaurantId, startAt, endAt, par
       // Using several tables at once doesn't by itself need staff review -- createReservation
       // gates on party size (the configured auto-confirm threshold), not table count. A full
       // table still honors that specific table's own approval flag.
-      requiresApproval: fullTableAny,
+      requiresApproval: fullTableNeedingApproval,
       summary: chosen.map(({ table, count }) => `${table.display_name}: ${count} guest${count === 1 ? "" : "s"}`).join(" / ")
     };
   }
@@ -178,8 +183,12 @@ export async function planAllocation({ client, restaurantId, startAt, endAt, par
     }
   }
 
-  // 3. Multiple nearby (not necessarily adjacent) tables, when the guest accepts a split.
-  if (preference === "split_ok") {
+  // 3. Multiple nearby (not necessarily adjacent) tables. This runs for "together" as well as
+  // "split_ok": the house rule is that a party under the large-group threshold always gets
+  // booked, splitting across tables if that is the only way. splitRequired tells the caller
+  // the party could not be seated at one table, so a guest who asked to sit together is told
+  // the honest options rather than silently split or bounced to a staff lead.
+  if (preference === "split_ok" || preference === "together") {
     const sorted = [...tables].sort((a, b) => b.freeSeats.length - a.freeSeats.length);
     const picked = [];
     let remaining = partySize;
@@ -197,6 +206,7 @@ export async function planAllocation({ client, restaurantId, startAt, endAt, par
         tableIds: picked.map((p) => p.table.id),
         seatIds: picked.flatMap((p) => p.seats.map((s) => s.id)),
         requiresApproval: false, // see createReservation -- gated on party size, not table count
+        splitRequired: picked.length > 1 && preference === "together",
         summary: picked.map((p) => `${p.table.display_name}: ${p.seats.map((s) => s.code).join(", ")}`).join(" / ")
       };
     }
