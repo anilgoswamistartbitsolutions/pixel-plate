@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   LayoutGrid, Grid3x3, CalendarClock, Users2, UtensilsCrossed, Building2,
   Mic, PhoneCall, BarChart3, Settings, LogOut, Plus, X, Check, Ban,
-  MapPin, Clock, ShieldCheck, Sparkles, ShoppingBag, Layers, CalendarDays, UtensilsCrossed
+  MapPin, Clock, ShieldCheck, Sparkles, ShoppingBag, Layers, CalendarDays
 } from "lucide-react";
 import { apiFetch, getStaff, clearSession } from "@/lib/api-client";
 import VoiceAgentWidget from "@/components/VoiceAgentWidget";
