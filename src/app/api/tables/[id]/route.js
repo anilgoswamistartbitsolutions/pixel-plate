@@ -1,8 +1,21 @@
-import { requireStaffAuth } from "@/lib/auth";
+import { requireStaffAuth, requireSuperAdmin } from "@/lib/auth";
 import { fail, ok, readJson } from "@/lib/http";
-import { updateTable, deactivateTable, reactivateTable, moveTable } from "@/lib/tables";
+import { updateTable, deactivateTable, reactivateTable, moveTable, deleteTable } from "@/lib/tables";
 
 export const dynamic = "force-dynamic";
+
+export async function DELETE(request, { params }) {
+  const auth = requireSuperAdmin(request);
+  if (auth instanceof Response) return auth;
+  const { id } = await params;
+  try {
+    const result = await deleteTable(auth.restaurantId, id);
+    return ok(result);
+  } catch (error) {
+    if (error.code === "has_history") return fail(error.message, 409);
+    return fail("Unable to delete table", 500, error.message);
+  }
+}
 
 export async function PATCH(request, { params }) {
   const auth = requireStaffAuth(request);

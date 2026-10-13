@@ -1,4 +1,5 @@
 import { query, withTransaction } from "@/lib/db";
+import { getSettings, getBookingRules, isWithinOpeningHours } from "@/lib/restaurant";
 
 export class TakeawayError extends Error {
   constructor(message, code = "takeaway_failed") {
@@ -9,10 +10,28 @@ export class TakeawayError extends Error {
 
 const SERVICE_CHARGE_PCT = 5;
 
+/** Rounds a requested pickup time up to the nearest configured slot interval (default 30
+ * minutes) -- prep takes time, so a guest can't ask for a pickup in the next five minutes. */
+export function roundToSlotInterval(hhmm, intervalMinutes, prepBufferMinutes) {
+  const now = new Date();
+  const [h, m] = hhmm.split(":").map(Number);
+  const requested = new Date(now);
+  requested.setHours(h, m, 0, 0);
+
+  const earliest = new Date(now.getTime() + prepBufferMinutes * 60000);
+  const base = requested < earliest ? earliest : requested;
+  const totalMinutes = base.getHours() * 60 + base.getMinutes();
+  const roundedMinutes = Math.ceil(totalMinutes / intervalMinutes) * intervalMinutes;
+  const rh = Math.floor(roundedMinutes / 60) % 24;
+  const rm = roundedMinutes % 60;
+  return `${String(rh).padStart(2, "0")}:${String(rm).padStart(2, "0")}`;
+}
+
 /**
- * Quotes a takeaway order from {menuItemId, quantity} lines -- always re-prices from the
- * current menu_items table (never trusts a client-supplied price), and refuses sold-out or
- * unavailable items rather than silently dropping them.
+ * Quotes a takeaway order from {menuItemId, quantity, variantLabel?} lines -- always re-prices
+ * from the current menu_items table (never trusts a client-supplied price). A variantLabel
+ * (e.g. "Large") is looked up against that item's size_options for its own price; an unknown
+ * variant is refused rather than silently falling back to the base price.
  */
 export async function quoteTakeaway(restaurantId, lines) {
   if (!lines?.length) throw new TakeawayError("At least one item is required.", "validation");
@@ -28,7 +47,18 @@ export async function quoteTakeaway(restaurantId, lines) {
     if (!item) throw new TakeawayError(`Menu item ${line.menuItemId} was not found.`, "not_found");
     if (!item.available || item.sold_out) throw new TakeawayError(`${item.name} is currently unavailable.`, "unavailable");
     const quantity = Math.max(1, Number(line.quantity) || 1);
-    return { menuItemId: item.id, name: item.name, quantity, unitPriceCents: item.price_cents };
+
+    let unitPriceCents = item.price_cents;
+    let variantLabel = null;
+    if (line.variantLabel) {
+      const options = item.size_options || [];
+      const match = options.find((o) => o.label.toLowerCase() === line.variantLabel.toLowerCase());
+      if (!match) throw new TakeawayError(`${item.name} doesn't have a "${line.variantLabel}" option.`, "not_found");
+      unitPriceCents = match.price_cents;
+      variantLabel = match.label;
+    }
+
+    return { menuItemId: item.id, name: item.name, quantity, unitPriceCents, variantLabel };
   });
 
   const subtotalCents = items.reduce((sum, i) => sum + i.unitPriceCents * i.quantity, 0);
@@ -38,10 +68,48 @@ export async function quoteTakeaway(restaurantId, lines) {
   return { items, subtotalCents, serviceChargePct: SERVICE_CHARGE_PCT, serviceChargeCents, totalCents };
 }
 
+/** Validates a requested pickup time: must round cleanly onto the restaurant's takeaway slot
+ * interval, honor the prep buffer, and fall inside today's opening hours. */
+async function validatePickupTime(restaurantId, requestedTime) {
+  const rules = await getBookingRules(restaurantId);
+  const settings = await getSettings(restaurantId);
+  const interval = rules?.takeaway_slot_interval_minutes ?? 30;
+  const prepBuffer = rules?.takeaway_prep_buffer_minutes ?? 30;
+  const today = new Date().toISOString().slice(0, 10);
+
+  const resolvedTime = requestedTime ? roundToSlotInterval(requestedTime, interval, prepBuffer) : roundToSlotInterval(
+    `${new Date().getHours()}:${new Date().getMinutes()}`, interval, prepBuffer
+  );
+
+  const hoursCheck = isWithinOpeningHours(settings, today, resolvedTime, 1);
+  if (!hoursCheck.ok) throw new TakeawayError(`We can't schedule a pickup for that time -- ${hoursCheck.reason}`, "closed");
+  return resolvedTime;
+}
+
+/** Refuses a new order once too many are already pending/preparing at once, so the kitchen is
+ * never silently overcommitted -- the caller (agent-tools) turns this into a staff callback
+ * offer instead of a false "order placed". */
+async function checkConcurrencyLimit(restaurantId) {
+  const rules = await getBookingRules(restaurantId);
+  const limit = rules?.takeaway_max_concurrent ?? 15;
+  const result = await query(
+    "select count(*)::int as count from takeaway_orders where restaurant_id = $1 and status in ('pending','preparing')",
+    [restaurantId]
+  );
+  if (result.rows[0].count >= limit) {
+    throw new TakeawayError(
+      "We're at capacity for takeout orders right now -- a staff member needs to confirm this one with you directly.",
+      "limit_reached"
+    );
+  }
+}
+
 export async function createTakeawayOrder({ restaurantId, customerName, phone, lines, requestedSlot, requestedTime, notes, source = "staff", createdByStaffId = null }) {
   if (!customerName?.trim()) throw new TakeawayError("Customer name is required.", "validation");
   if (!phone?.trim()) throw new TakeawayError("A contact phone number is required.", "validation");
 
+  await checkConcurrencyLimit(restaurantId);
+  const resolvedTime = await validatePickupTime(restaurantId, requestedTime);
   const quote = await quoteTakeaway(restaurantId, lines);
 
   return withTransaction(async (client) => {
@@ -51,7 +119,7 @@ export async function createTakeawayOrder({ restaurantId, customerName, phone, l
          service_charge_pct, service_charge_cents, total_cents, notes, source, created_by_staff_id)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning *`,
       [
-        restaurantId, customerName, phone, requestedSlot || null, requestedTime || null,
+        restaurantId, customerName, phone, requestedSlot || null, resolvedTime,
         quote.subtotalCents, quote.serviceChargePct, quote.serviceChargeCents, quote.totalCents,
         notes || null, source, createdByStaffId
       ]
@@ -59,9 +127,9 @@ export async function createTakeawayOrder({ restaurantId, customerName, phone, l
     const order = orderResult.rows[0];
     for (const item of quote.items) {
       await client.query(
-        `insert into takeaway_order_items (takeaway_order_id, menu_item_id, item_name, quantity, unit_price_cents)
-         values ($1,$2,$3,$4,$5)`,
-        [order.id, item.menuItemId, item.name, item.quantity, item.unitPriceCents]
+        `insert into takeaway_order_items (takeaway_order_id, menu_item_id, item_name, quantity, unit_price_cents, variant_label)
+         values ($1,$2,$3,$4,$5,$6)`,
+        [order.id, item.menuItemId, item.name, item.quantity, item.unitPriceCents, item.variantLabel]
       );
     }
     return { order, items: quote.items, quote };
@@ -77,7 +145,7 @@ export async function listTakeawayOrders({ restaurantId, status }) {
   }
   const result = await query(
     `select o.*, coalesce(
-        (select json_agg(json_build_object('name', ti.item_name, 'quantity', ti.quantity, 'unit_price_cents', ti.unit_price_cents))
+        (select json_agg(json_build_object('name', ti.item_name, 'quantity', ti.quantity, 'unit_price_cents', ti.unit_price_cents, 'variant_label', ti.variant_label))
          from takeaway_order_items ti where ti.takeaway_order_id = o.id),
         '[]') as items
      from takeaway_orders o where ${conditions.join(" and ")} order by o.created_at desc`,
@@ -111,8 +179,8 @@ export async function updateTakeawayStatus(restaurantId, id, { status, paymentSt
   return result.rows[0];
 }
 
-/** Replace the line items on a still-pending order (guest said "actually, change it to...").
- * Refuses once the kitchen has started preparing it. */
+/** Replace the line items (and/or quantities) on a still-pending order. Refuses once the
+ * kitchen has started preparing it. */
 export async function modifyTakeawayOrder(restaurantId, id, lines) {
   const quote = await quoteTakeaway(restaurantId, lines);
   return withTransaction(async (client) => {
@@ -127,9 +195,9 @@ export async function modifyTakeawayOrder(restaurantId, id, lines) {
     await client.query("delete from takeaway_order_items where takeaway_order_id = $1", [id]);
     for (const item of quote.items) {
       await client.query(
-        `insert into takeaway_order_items (takeaway_order_id, menu_item_id, item_name, quantity, unit_price_cents)
-         values ($1,$2,$3,$4,$5)`,
-        [id, item.menuItemId, item.name, item.quantity, item.unitPriceCents]
+        `insert into takeaway_order_items (takeaway_order_id, menu_item_id, item_name, quantity, unit_price_cents, variant_label)
+         values ($1,$2,$3,$4,$5,$6)`,
+        [id, item.menuItemId, item.name, item.quantity, item.unitPriceCents, item.variantLabel]
       );
     }
     const updated = await client.query(

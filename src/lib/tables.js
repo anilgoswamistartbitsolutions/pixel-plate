@@ -129,6 +129,25 @@ export async function reactivateTable(restaurantId, tableId) {
   return result.rows[0];
 }
 
+/** Hard delete -- only when the table has never had a reservation, so real booking history
+ * can never be destroyed. Anything with history should be deactivated instead. */
+export async function deleteTable(restaurantId, tableId) {
+  const historyCheck = await query(
+    "select 1 from seat_allocations sa join table_seats s on s.id = sa.seat_id where s.table_id = $1 limit 1",
+    [tableId]
+  );
+  if (historyCheck.rows.length) {
+    const error = new Error("This table has reservation history and cannot be deleted -- deactivate it instead.");
+    error.code = "has_history";
+    throw error;
+  }
+  await withTransaction(async (client) => {
+    await client.query("delete from table_seats where table_id = $1", [tableId]);
+    await client.query("delete from restaurant_tables where id = $1 and restaurant_id = $2", [tableId, restaurantId]);
+  });
+  return { deleted: true };
+}
+
 export async function moveTable(restaurantId, tableId, posX, posY) {
   const result = await query(
     "update restaurant_tables set pos_x = $3, pos_y = $4, updated_at = now() where id = $1 and restaurant_id = $2 returning *",

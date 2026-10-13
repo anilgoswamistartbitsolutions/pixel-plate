@@ -16,6 +16,19 @@ export async function createFloor(restaurantId, { name, sortOrder }) {
   return result.rows[0];
 }
 
+/** Only deletable while no table is assigned -- otherwise reassign or deactivate the tables
+ * first (restaurant_tables.floor_id already ON DELETE SET NULL as a backstop either way). */
+export async function deleteFloor(restaurantId, id) {
+  const tableCheck = await query("select 1 from restaurant_tables where floor_id = $1 limit 1", [id]);
+  if (tableCheck.rows.length) {
+    const error = new Error("This floor still has tables assigned -- move or remove them first.");
+    error.code = "has_tables";
+    throw error;
+  }
+  await query("delete from floors where id = $1 and restaurant_id = $2", [id, restaurantId]);
+  return { deleted: true };
+}
+
 export async function updateFloor(restaurantId, id, { name, sortOrder, active }) {
   const result = await query(
     `update floors set name = coalesce($3,name), sort_order = coalesce($4,sort_order), active = coalesce($5,active)

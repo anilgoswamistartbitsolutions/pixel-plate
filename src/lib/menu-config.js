@@ -1,4 +1,5 @@
 import { query, withTransaction } from "@/lib/db";
+import { expireSoldOut } from "@/lib/menu";
 
 export async function listConfigurations(restaurantId) {
   const result = await query(
@@ -70,6 +71,108 @@ export async function clearScheduleForDate(restaurantId, date) {
   await query("delete from menu_daily_schedule where restaurant_id = $1 and schedule_date = $2", [restaurantId, date]);
 }
 
+/** Per-slot schedule for one date: one row per morning/midday/evening, each either a named
+ * configuration, a custom item list (itemIds set -- shown as "Custom" since it no longer
+ * matches any single configuration), closed, or unset (falls back to the default menu). */
+export async function getDaySlotSchedule(restaurantId, date) {
+  const rows = (await query(
+    `select s.*, c.name as configuration_name from menu_slot_schedule s
+     left join menu_configurations c on c.id = s.configuration_id
+     where s.restaurant_id = $1 and s.schedule_date = $2`,
+    [restaurantId, date]
+  )).rows;
+
+  const byId = new Map(rows.map((r) => [r.slot, r]));
+  const result = {};
+  for (const slot of ["morning", "midday", "evening"]) {
+    const row = byId.get(slot);
+    if (!row) { result[slot] = { mode: "default", items: null, closed: false }; continue; }
+    if (row.closed) { result[slot] = { mode: "closed", items: null, closed: true }; continue; }
+    if (row.item_ids_override) {
+      result[slot] = { mode: "custom", items: row.item_ids_override, configurationId: row.configuration_id, closed: false };
+    } else if (row.configuration_id) {
+      result[slot] = { mode: "configuration", configurationId: row.configuration_id, configurationName: row.configuration_name, closed: false };
+    } else {
+      result[slot] = { mode: "default", items: null, closed: false };
+    }
+  }
+  return result;
+}
+
+/** Assign a configuration (whole item set) to one slot on one date. */
+export async function assignConfigurationToSlot(restaurantId, date, slot, configurationId) {
+  const result = await query(
+    `insert into menu_slot_schedule (restaurant_id, schedule_date, slot, configuration_id, item_ids_override, closed)
+     values ($1,$2,$3,$4,null,false)
+     on conflict (restaurant_id, schedule_date, slot) do update set
+       configuration_id = excluded.configuration_id, item_ids_override = null, closed = false, updated_at = now()
+     returning *`,
+    [restaurantId, date, slot, configurationId]
+  );
+  return result.rows[0];
+}
+
+/** Save a custom (possibly edited-from-a-configuration) item list for one slot/date. Once
+ * edited this way the slot shows as "Custom" rather than the originating configuration's name,
+ * even if configurationId is kept for reference. */
+export async function setCustomSlotItems(restaurantId, date, slot, itemIds, configurationId = null) {
+  const result = await query(
+    `insert into menu_slot_schedule (restaurant_id, schedule_date, slot, configuration_id, item_ids_override, closed)
+     values ($1,$2,$3,$4,$5,false)
+     on conflict (restaurant_id, schedule_date, slot) do update set
+       configuration_id = excluded.configuration_id, item_ids_override = excluded.item_ids_override, closed = false, updated_at = now()
+     returning *`,
+    [restaurantId, date, slot, configurationId, itemIds]
+  );
+  return result.rows[0];
+}
+
+export async function setSlotClosed(restaurantId, date, slot, closed) {
+  const result = await query(
+    `insert into menu_slot_schedule (restaurant_id, schedule_date, slot, closed)
+     values ($1,$2,$3,$4)
+     on conflict (restaurant_id, schedule_date, slot) do update set closed = excluded.closed, updated_at = now()
+     returning *`,
+    [restaurantId, date, slot, closed]
+  );
+  return result.rows[0];
+}
+
+/** What's actually available for one date + slot, resolving configuration/custom/default/closed. */
+export async function getMenuForDateSlot(restaurantId, date, slot) {
+  await expireSoldOut(restaurantId);
+  const schedule = (await getDaySlotSchedule(restaurantId, date))[slot];
+  if (schedule.closed) return { mode: "closed", items: [] };
+
+  let itemIds = null;
+  if (schedule.mode === "custom") itemIds = schedule.items;
+  else if (schedule.mode === "configuration") {
+    const rows = (await query(
+      "select menu_item_id from menu_configuration_items where configuration_id = $1",
+      [schedule.configurationId]
+    )).rows;
+    itemIds = rows.map((r) => r.menu_item_id);
+  }
+
+  if (itemIds) {
+    const items = (await query(
+      `select mi.*, cat.name as category_name from menu_items mi
+       left join menu_categories cat on cat.id = mi.category_id
+       where mi.restaurant_id = $1 and mi.id = any($2::bigint[]) and mi.available = true and mi.sold_out = false`,
+      [restaurantId, itemIds]
+    )).rows;
+    return { mode: schedule.mode, configurationName: schedule.configurationName, items };
+  }
+
+  const items = (await query(
+    `select mi.*, cat.name as category_name from menu_items mi
+     left join menu_categories cat on cat.id = mi.category_id
+     where mi.restaurant_id = $1 and mi.available = true and mi.sold_out = false and $2 = any(mi.meal_periods)`,
+    [restaurantId, slot]
+  )).rows;
+  return { mode: "default", items };
+}
+
 export async function getScheduleForRange(restaurantId, from, to) {
   const result = await query(
     `select s.schedule_date, c.id as configuration_id, c.name as configuration_name
@@ -81,25 +184,19 @@ export async function getScheduleForRange(restaurantId, from, to) {
   return result.rows;
 }
 
-/** The menu actually available on a given date: the assigned configuration's items if one
- * exists for that date, otherwise every active item (the "always on" default menu). */
+/** The whole day's menu, built by combining all three slots' per-slot schedules (used by
+ * get_menu when the agent doesn't ask for a specific slot). Sold-out items that expired
+ * (sold_out_date before today) are filtered out by the sold_out check in the items query
+ * itself -- see menu_items.sold_out_date handling in src/lib/menu.js. */
 export async function getMenuForDate(restaurantId, date) {
-  const scheduled = await query(
-    `select mi.*, cat.name as category_name
-     from menu_daily_schedule s
-     join menu_configuration_items mci on mci.configuration_id = s.configuration_id
-     join menu_items mi on mi.id = mci.menu_item_id
-     left join menu_categories cat on cat.id = mi.category_id
-     where s.restaurant_id = $1 and s.schedule_date = $2`,
-    [restaurantId, date]
+  const bySlot = await Promise.all(
+    ["morning", "midday", "evening"].map((slot) => getMenuForDateSlot(restaurantId, date, slot))
   );
-  if (scheduled.rows.length) return { source: "configuration", items: scheduled.rows };
-
-  const defaultItems = await query(
-    `select mi.*, cat.name as category_name from menu_items mi
-     left join menu_categories cat on cat.id = mi.category_id
-     where mi.restaurant_id = $1 and mi.available = true`,
-    [restaurantId]
-  );
-  return { source: "default", items: defaultItems.rows };
+  const seen = new Map();
+  let anyNonDefault = false;
+  for (const { mode, items } of bySlot) {
+    if (mode !== "default") anyNonDefault = true;
+    for (const item of items) seen.set(item.id, item);
+  }
+  return { source: anyNonDefault ? "configuration" : "default", items: Array.from(seen.values()) };
 }

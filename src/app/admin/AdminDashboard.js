@@ -13,11 +13,22 @@ import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend
 } from "recharts";
 
+// Every status/tag/source value in the database is lowercase snake_case (confirmed,
+// no_show, prepared_paid, ...) -- this is the one place that turns it into display text
+// ("Confirmed", "No Show", "Prepared & Paid") so every badge, tab, and table cell reads the
+// same way instead of each view hand-rolling its own capitalization.
+const LABEL_OVERRIDES = { prepared_paid: "Prepared & Paid", no_show: "No Show", needs_info: "Needs Info" };
+function titleCase(value) {
+  if (!value) return "";
+  if (LABEL_OVERRIDES[value]) return LABEL_OVERRIDES[value];
+  return String(value).split(/[_\s]+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
 const NAV_ITEMS = [
   { key: "overview", label: "Overview", icon: LayoutGrid },
   { key: "floorplan", label: "Live Floor Plan", icon: Grid3x3 },
   { key: "reservations", label: "Reservations", icon: CalendarClock },
-  { key: "groups", label: "Group Booking Requests", icon: Users2 },
+  { key: "groups", label: "Leads", icon: Users2 },
   { key: "menu", label: "Menu & Daily Specials", icon: UtensilsCrossed },
   { key: "takeaway", label: "Take Away", icon: ShoppingBag },
   { key: "info", label: "Restaurant Information", icon: Building2 },
@@ -587,6 +598,7 @@ function ReservationsView({ date, notify }) {
   const [rangeMode, setRangeMode] = useState(false);
   const [rangeFrom, setRangeFrom] = useState(date);
   const [rangeTo, setRangeTo] = useState(date);
+  const [editing, setEditing] = useState(null);
 
   const load = useCallback(() => {
     const params = rangeMode
@@ -644,7 +656,7 @@ function ReservationsView({ date, notify }) {
 
       <div className="tabRow">
         {["", "confirmed", "pending", "seated", "completed", "cancelled", "no_show"].map((s) => (
-          <button key={s} className={`tabChip ${status === s ? "active" : ""}`} onClick={() => setStatus(s)}>{s || "All"}</button>
+          <button key={s} className={`tabChip ${status === s ? "active" : ""}`} onClick={() => setStatus(s)}>{s ? titleCase(s) : "All"}</button>
         ))}
       </div>
 
@@ -662,10 +674,18 @@ function ReservationsView({ date, notify }) {
                   <td>{r.party_size}</td>
                   {rangeMode && <td>{String(r.reservation_date).slice(0, 10)}</td>}
                   <td>{r.start_time?.slice(0, 5)}</td>
-                  <td>{r.seating_mode}</td>
-                  <td><span className={`badge ${r.status}`}>{r.status}</span></td>
-                  <td>{r.source.replace("_", " ")}</td>
-                  <td style={{ display: "flex", gap: 6 }}>
+                  <td>
+                    {titleCase(r.seating_mode)}
+                    {r.seats?.length > 0 && (
+                      <div className="pillRow" style={{ marginTop: 4 }}>
+                        {r.seats.map((s, i) => <span key={i} className="pill">{s.code}</span>)}
+                      </div>
+                    )}
+                  </td>
+                  <td><span className={`badge ${r.status}`}>{titleCase(r.status)}</span></td>
+                  <td>{titleCase(r.source)}</td>
+                  <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {["confirmed", "pending", "seated"].includes(r.status) && <button className="button ghost small" onClick={() => setEditing(r)}>Edit</button>}
                     {r.status === "confirmed" && <button className="button secondary small" onClick={() => setReservationStatus(r.id, "seated")}>Seat</button>}
                     {r.status === "seated" && <button className="button secondary small" onClick={() => setReservationStatus(r.id, "completed")}>Complete</button>}
                     {["confirmed", "pending", "seated"].includes(r.status) && <button className="button danger small" onClick={() => cancel(r.id)}>Cancel</button>}
@@ -678,6 +698,7 @@ function ReservationsView({ date, notify }) {
       )}
 
       {showAdd && <AddReservationModal defaultDate={date} onClose={() => setShowAdd(false)} onSaved={(outcome) => { setShowAdd(false); notify(outcome.status === "confirmed" ? `Confirmed: ${outcome.reservation.booking_ref}` : "Sent for staff review (pending)"); load(); }} />}
+      {editing && <EditReservationModal reservation={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); notify("Reservation updated"); load(); }} />}
     </div>
   );
 }
@@ -687,6 +708,47 @@ const TIME_SLOTS = [
   { label: "Mid-day", icon: "☀️", times: ["12:00", "13:00", "14:00", "15:00"] },
   { label: "Evening", icon: "🌙", times: ["18:00", "19:00", "20:00", "21:00"] }
 ];
+
+function EditReservationModal({ reservation, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    reservationDate: String(reservation.reservation_date).slice(0, 10),
+    startTime: reservation.start_time?.slice(0, 5) || "19:00",
+    partySize: reservation.party_size
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await apiFetch(`/api/reservations/${reservation.id}`, { method: "PATCH", body: JSON.stringify({ action: "modify", ...form }) });
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalCard" onClick={(e) => e.stopPropagation()}>
+        <div className="modalHeader"><h3>Edit reservation {reservation.booking_ref}</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        {error && <div className="loginError">{error}</div>}
+        <div className="cardHint" style={{ marginBottom: 14 }}>{reservation.customer_name} &middot; {reservation.phone}</div>
+        <form onSubmit={submit} className="formGrid">
+          <div className="field"><label>Date</label><input className="textInput" type="date" required value={form.reservationDate} onChange={(e) => setForm({ ...form, reservationDate: e.target.value })} /></div>
+          <div className="field"><label>Time</label><input className="textInput" type="time" required value={form.startTime} onChange={(e) => setForm({ ...form, startTime: e.target.value })} /></div>
+          <div className="field"><label>Party size</label><input className="textInput" type="number" min="1" required value={form.partySize} onChange={(e) => setForm({ ...form, partySize: Number(e.target.value) })} /></div>
+          <div className="field" style={{ gridColumn: "1 / -1" }}>
+            <span className="cardHint">If the new time/size isn&rsquo;t available, the original booking stays unchanged.</span>
+          </div>
+          <button className="button primary" type="submit" disabled={saving} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Checking availability..." : "Save changes"}</button>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 function AddReservationModal({ defaultDate, onClose, onSaved }) {
   const [form, setForm] = useState({ customerName: "", phone: "", partySize: 2, reservationDate: defaultDate, startTime: "19:00", seatingPreference: "together", notes: "" });
@@ -808,61 +870,159 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
 
 /* ====================================================================== Group Requests */
 
+const LEAD_TYPE_LABELS = { group_booking: "Group Booking", full_floor: "Full Floor", general_inquiry: "General Inquiry", other: "Other" };
+const PRIORITY_COLORS = { urgent: "cancelled", high: "pending", normal: "active", low: "completed" };
+
 function GroupRequestsView({ notify }) {
   const [list, setList] = useState(null);
+  const [filterStatus, setFilterStatus] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
   const [err, setErr] = useState("");
 
-  const load = useCallback(() => { apiFetch("/api/group-requests").then(setList).catch((e) => setErr(e.message)); }, []);
+  const load = useCallback(() => {
+    const qs = filterStatus ? `?status=${filterStatus}` : "";
+    apiFetch(`/api/group-requests${qs}`).then(setList).catch((e) => setErr(e.message));
+  }, [filterStatus]);
   useEffect(() => { load(); }, [load]);
 
   async function confirmRequest(id) {
     try {
       const result = await apiFetch(`/api/group-requests/${id}`, { method: "PATCH", body: JSON.stringify({ action: "confirm" }) });
-      notify(result.status === "confirmed" ? "Group request confirmed and seated" : "Still unavailable -- marked needs info");
+      notify(result.status === "confirmed" ? "Lead confirmed" : "Still unavailable -- marked needs info");
       load();
     } catch (e) { notify(e.message, "error"); }
   }
   async function rejectRequest(id) {
     try {
       await apiFetch(`/api/group-requests/${id}`, { method: "PATCH", body: JSON.stringify({ action: "reject", staffNotes: "Unable to accommodate" }) });
-      notify("Request rejected");
+      notify("Lead rejected");
+      load();
+    } catch (e) { notify(e.message, "error"); }
+  }
+  async function setPriority(id, priority) {
+    try {
+      await apiFetch(`/api/group-requests/${id}`, { method: "PATCH", body: JSON.stringify({ action: "update_meta", priority }) });
       load();
     } catch (e) { notify(e.message, "error"); }
   }
 
   if (err) return <ErrorBlock message={err} />;
-  if (!list) return <LoadingBlock />;
 
   return (
     <div>
-      <div className="sectionHeader"><div><h2>Group booking requests</h2><p>Large parties, combined tables, or anything needing staff review before confirming.</p></div></div>
-      {list.length === 0 ? (
-        <EmptyState title="No pending requests" hint="Large or ambiguous booking requests from the voice agent or staff will land here." />
+      <div className="sectionHeader">
+        <div><h2>Leads</h2><p>Large parties, full-floor requests, and anything needing staff review before it becomes a real booking.</p></div>
+        <button className="button primary" onClick={() => setShowAdd(true)}><Plus size={15} />New lead</button>
+      </div>
+
+      <div className="tabRow">
+        {["", "pending", "needs_info", "confirmed", "rejected"].map((s) => (
+          <button key={s} className={`tabChip ${filterStatus === s ? "active" : ""}`} onClick={() => setFilterStatus(s)}>{s ? titleCase(s) : "All"}</button>
+        ))}
+      </div>
+
+      {!list ? <LoadingBlock /> : list.length === 0 ? (
+        <EmptyState title="No leads" hint="Large or ambiguous booking requests from the voice agent or staff will land here." />
       ) : (
         <div className="grid cols-2">
           {list.map((req) => (
             <div key={req.id} className="card">
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
                 <strong>{req.customer_name}</strong>
-                <span className={`badge ${req.status}`}>{req.status.replace("_", " ")}</span>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <span className={`badge ${PRIORITY_COLORS[req.priority]}`}>{titleCase(req.priority)}</span>
+                  <span className={`badge ${req.status}`}>{titleCase(req.status)}</span>
+                </div>
+              </div>
+              <div className="pillRow" style={{ marginBottom: 8 }}>
+                <span className="pill">{LEAD_TYPE_LABELS[req.lead_type] || titleCase(req.lead_type)}</span>
               </div>
               <div className="cardHint">{req.phone}</div>
               <div style={{ margin: "10px 0", fontSize: 13.5 }}>
                 <div><Users2 size={13} style={{ verticalAlign: "-2px" }} /> {req.party_size} guests</div>
-                <div><Clock size={13} style={{ verticalAlign: "-2px" }} /> {req.requested_date} at {req.requested_time?.slice(0, 5)}</div>
+                <div><Clock size={13} style={{ verticalAlign: "-2px" }} /> {String(req.requested_date).slice(0, 10)} at {req.requested_time?.slice(0, 5)}</div>
                 {req.seating_preference && <div><MapPin size={13} style={{ verticalAlign: "-2px" }} /> {req.seating_preference}</div>}
               </div>
               {req.notes && <p className="cardHint">{req.notes}</p>}
-              {["pending", "needs_info"].includes(req.status) && (
-                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                  <button className="button primary small" onClick={() => confirmRequest(req.id)}><Check size={13} />Confirm</button>
-                  <button className="button danger small" onClick={() => rejectRequest(req.id)}><Ban size={13} />Reject</button>
-                </div>
-              )}
+              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                {["pending", "needs_info"].includes(req.status) && (
+                  <>
+                    <button className="button primary small" onClick={() => confirmRequest(req.id)}><Check size={13} />Confirm</button>
+                    <button className="button danger small" onClick={() => rejectRequest(req.id)}><Ban size={13} />Reject</button>
+                  </>
+                )}
+                <select className="select" style={{ minHeight: 32, padding: "4px 28px 4px 10px", fontSize: 12.5 }} value={req.priority} onChange={(e) => setPriority(req.id, e.target.value)}>
+                  <option value="low">Low priority</option>
+                  <option value="normal">Normal priority</option>
+                  <option value="high">High priority</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </div>
             </div>
           ))}
         </div>
       )}
+
+      {showAdd && <AddLeadModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); notify("Lead created"); load(); }} />}
+    </div>
+  );
+}
+
+function AddLeadModal({ onClose, onSaved }) {
+  const [form, setForm] = useState({
+    customerName: "", phone: "", partySize: 8, requestedDate: "", requestedTime: "19:00",
+    seatingPreference: "", notes: "", priority: "normal", leadType: "group_booking"
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await apiFetch("/api/group-requests", { method: "POST", body: JSON.stringify(form) });
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalCard" onClick={(e) => e.stopPropagation()}>
+        <div className="modalHeader"><h3>New lead</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        {error && <div className="loginError">{error}</div>}
+        <form onSubmit={submit} className="formGrid">
+          <div className="field"><label>Lead type</label>
+            <select className="select" value={form.leadType} onChange={(e) => setForm({ ...form, leadType: e.target.value })}>
+              <option value="group_booking">Group Booking</option>
+              <option value="full_floor">Full Floor (needs 7+ days notice)</option>
+              <option value="general_inquiry">General Inquiry</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div className="field"><label>Priority</label>
+            <select className="select" value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
+              <option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option>
+            </select>
+          </div>
+          <div className="field"><label>Name</label><input className="textInput" required value={form.customerName} onChange={(e) => setForm({ ...form, customerName: e.target.value })} /></div>
+          <div className="field"><label>Phone</label><input className="textInput" required value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
+          <div className="field"><label>Party size</label><input className="textInput" type="number" min="1" value={form.partySize} onChange={(e) => setForm({ ...form, partySize: Number(e.target.value) })} /></div>
+          <div className="field"><label>Requested date</label><input className="textInput" type="date" required value={form.requestedDate} onChange={(e) => setForm({ ...form, requestedDate: e.target.value })} /></div>
+          <div className="field"><label>Requested time</label><input className="textInput" type="time" value={form.requestedTime} onChange={(e) => setForm({ ...form, requestedTime: e.target.value })} /></div>
+          {form.leadType === "full_floor" && (
+            <div className="field" style={{ gridColumn: "1 / -1" }}>
+              <span className="cardHint" style={{ background: "var(--amber-soft)", padding: 8, borderRadius: 8, display: "block", color: "#9a6d13" }}>
+                Full-floor requests require at least 7 days&rsquo; notice and the entire floor must be empty for the slot -- staff review and approve these manually.
+              </span>
+            </div>
+          )}
+          <div className="field" style={{ gridColumn: "1 / -1" }}><label>Notes</label><textarea className="textarea" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
+          <button className="button primary" type="submit" disabled={saving} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Creating..." : "Create lead"}</button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -1941,8 +2101,8 @@ function CallsView({ notify }) {
               {calls.map((c) => (
                 <tr key={c.id}>
                   <td>{c.caller_number || "Unknown"}</td>
-                  <td>{c.channel.replace("_", " ")}</td>
-                  <td><span className={`badge ${c.status}`}>{c.status}</span></td>
+                  <td>{titleCase(c.channel)}</td>
+                  <td><span className={`badge ${c.status}`}>{titleCase(c.status)}</span></td>
                   <td>{c.outcome || "--"}</td>
                   <td>{new Date(c.started_at).toLocaleString()}</td>
                 </tr>
@@ -1962,7 +2122,7 @@ function CallsView({ notify }) {
                 <div className="cardHint">{f.notes}</div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span className={`badge ${f.status}`}>{f.status.replace("_", " ")}</span>
+                <span className={`badge ${f.status}`}>{titleCase(f.status)}</span>
                 {f.status !== "done" && <button className="button secondary small" onClick={() => resolveFollowup(f.id)}>Mark done</button>}
               </div>
             </div>
@@ -2033,7 +2193,7 @@ function ReportsView({ date }) {
                 <thead><tr><th>Status</th><th>Count</th><th>Guests</th></tr></thead>
                 <tbody>
                   {Object.entries(dayData.reservations).map(([status, v]) => (
-                    <tr key={status}><td><span className={`badge ${status}`}>{status.replace("_", " ")}</span></td><td>{v.count}</td><td>{v.guests}</td></tr>
+                    <tr key={status}><td><span className={`badge ${status}`}>{titleCase(status)}</span></td><td>{v.count}</td><td>{v.guests}</td></tr>
                   ))}
                 </tbody>
               </table>

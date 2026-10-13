@@ -6,7 +6,7 @@ import { createGroupRequest } from "@/lib/group-requests";
 import { createFollowup } from "@/lib/calls";
 import { getBookingRules } from "@/lib/restaurant";
 import { getDailySlots, slotForTime } from "@/lib/floors";
-import { getMenuForDate } from "@/lib/menu-config";
+import { getMenuForDate, getMenuForDateSlot } from "@/lib/menu-config";
 import { createTakeawayOrder, quoteTakeaway, modifyTakeawayOrder, getTakeawayStatus, updateTakeawayStatus, TakeawayError } from "@/lib/takeaway";
 import { query } from "@/lib/db";
 
@@ -52,11 +52,12 @@ export const TOOLS = {
   // special, etc.) instead of the default menu, when one is assigned.
   async get_menu({ restaurantId, date, slot, categoryName }) {
     const isoDate = date || new Date().toISOString().slice(0, 10);
-    const { source, items } = await getMenuForDate(restaurantId, isoDate);
-    let filtered = items.filter((i) => i.available && !i.sold_out);
-    if (slot) filtered = filtered.filter((i) => (i.meal_periods || []).includes(slot));
-    if (categoryName) filtered = filtered.filter((i) => i.category_name?.toLowerCase() === categoryName.toLowerCase());
-    return { date: isoDate, menu_source: source, items: filtered.map(formatMenuItem) };
+    const { mode, items, configurationName } = slot
+      ? await getMenuForDateSlot(restaurantId, isoDate, slot)
+      : { ...(await getMenuForDate(restaurantId, isoDate)), mode: undefined };
+    if (mode === "closed") return { date: isoDate, slot, closed: true, items: [] };
+    const filtered = categoryName ? items.filter((i) => i.category_name?.toLowerCase() === categoryName.toLowerCase()) : items;
+    return { date: isoDate, slot: slot || null, menu_source: mode || "default", configuration: configurationName || null, items: filtered.map(formatMenuItem) };
   },
 
   async get_daily_slots({ restaurantId }) {

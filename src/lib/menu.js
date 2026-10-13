@@ -6,7 +6,18 @@ const MEAL_PERIOD_BY_HOUR = (hour) => {
   return "dinner";
 };
 
+/** Sold-out is scoped to the day it was marked -- lazily un-marks anything whose sold_out_date
+ * has passed so a "sold out today" never silently stays sold out tomorrow. No cron needed:
+ * every read path below calls this first. */
+export async function expireSoldOut(restaurantId) {
+  await query(
+    "update menu_items set sold_out = false, sold_out_date = null where restaurant_id = $1 and sold_out = true and sold_out_date < current_date",
+    [restaurantId]
+  );
+}
+
 export async function listMenu({ restaurantId, mealPeriod, categoryId, onlyAvailable = true }) {
+  await expireSoldOut(restaurantId);
   const conditions = ["m.restaurant_id = $1"];
   const values = [restaurantId];
   if (onlyAvailable) {
@@ -112,7 +123,8 @@ export async function upsertMenuItem(restaurantId, item) {
 
 export async function setSoldOut(restaurantId, itemId, soldOut) {
   const result = await query(
-    "update menu_items set sold_out = $3, updated_at = now() where id = $1 and restaurant_id = $2 returning *",
+    `update menu_items set sold_out = $3, sold_out_date = case when $3 then current_date else null end, updated_at = now()
+     where id = $1 and restaurant_id = $2 returning *`,
     [itemId, restaurantId, soldOut]
   );
   return result.rows[0];
