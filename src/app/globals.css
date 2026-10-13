@@ -260,6 +260,26 @@ a { color: var(--brand-dark); text-decoration: none; }
 .checkAvailabilityBtn:hover:not(:disabled) { background: var(--brand); border-style: solid; color: #fff; }
 .checkAvailabilityBtn:disabled { opacity: .6; cursor: wait; }
 
+/* Grouped steps inside a longer modal (build an order, review it, ...) so each stage reads
+   as its own block rather than one undifferentiated wall of fields. */
+.modalSection {
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 14px; margin-bottom: 14px; background: #fff;
+}
+.modalSectionTitle {
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--muted); margin-bottom: 10px; display: flex; align-items: center; gap: 6px;
+}
+.modalSectionTitle .cardHint { text-transform: none; letter-spacing: 0; font-weight: 600; }
+.orderLine {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--line-soft);
+}
+.orderTotalRow {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line);
+}
+
 /* ---------------------------------------------------------------- Switches */
 
 .switchRow { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--line-soft); }

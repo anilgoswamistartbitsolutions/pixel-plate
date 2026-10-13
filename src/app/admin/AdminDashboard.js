@@ -2338,6 +2338,19 @@ function NewTakeawayModal({ onClose, onSaved }) {
     } finally { setSaving(false); }
   }
 
+  function lineUnitPriceCents(line) {
+    const item = items.find((i) => i.id === line.menuItemId);
+    if (!item) return 0;
+    if (line.variantLabel) {
+      const variant = (item.size_options || []).find((o) => o.label === line.variantLabel);
+      if (variant) return variant.price_cents;
+    }
+    return item.price_cents;
+  }
+  // Live estimate shown while building, before the authoritative server-side quote --
+  // clearly labeled as an estimate since the real quote always re-prices from the DB.
+  const runningSubtotalCents = lines.reduce((sum, l) => sum + lineUnitPriceCents(l) * l.quantity, 0);
+
   const available = items.filter((i) => i.available && !i.sold_out);
 
   if (stage === "review") {
@@ -2346,20 +2359,38 @@ function NewTakeawayModal({ onClose, onSaved }) {
         <div className="modalCard" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
           <div className="modalHeader"><h3>Confirm takeaway order</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
           {error && <div className="loginError">{error}</div>}
-          <p className="cardHint" style={{ marginBottom: 12 }}>Review before creating -- this always needs an explicit confirmation.</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
-            {quote.items.map((i, idx) => (
-              <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5 }}>
-                <span>{i.quantity}&times; {i.name}</span>
-                <span>${(Number(i.unit_price) * i.quantity).toFixed(2)}</span>
+          <p className="cardHint" style={{ marginBottom: 14 }}>Priced from the live menu. Creating an order always needs this explicit confirmation.</p>
+
+          <div className="modalSection">
+            <div className="modalSectionTitle">Items</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {quote.items.map((i, idx) => (
+                <div key={idx} className="orderLine">
+                  <div style={{ flex: 1 }}>
+                    <strong style={{ fontSize: 13.5 }}>{i.quantity}&times; {i.name}{i.variantLabel ? ` (${i.variantLabel})` : ""}</strong>
+                    <div className="cardHint">${(i.unitPriceCents / 100).toFixed(2)} each</div>
+                  </div>
+                  <strong style={{ fontSize: 13.5 }}>${((i.unitPriceCents * i.quantity) / 100).toFixed(2)}</strong>
+                </div>
+              ))}
+            </div>
+            <div className="orderTotalRow">
+              <span className="cardHint">
+                Subtotal ${(quote.subtotalCents / 100).toFixed(2)} + {quote.serviceChargePct}% service (${(quote.serviceChargeCents / 100).toFixed(2)})
+              </span>
+              <strong style={{ fontSize: 15 }}>${(quote.totalCents / 100).toFixed(2)}</strong>
+            </div>
+          </div>
+
+          <div className="modalSection">
+            <div className="modalSectionTitle">Pickup</div>
+            <div style={{ fontSize: 13.5 }}>
+              <div><strong>{form.customerName}</strong> &middot; {form.phone}</div>
+              <div className="cardHint" style={{ marginTop: 3 }}>
+                {SLOT_OPTIONS.find(([k]) => k === form.requestedSlot)?.[1] || form.requestedSlot} &middot; pay at pickup
               </div>
-            ))}
-          </div>
-          <div className="cardHint" style={{ background: "var(--line-soft)", padding: 10, borderRadius: 10, marginBottom: 14 }}>
-            Subtotal ${quote.subtotal} + {quote.serviceChargePct}% service = <strong>${quote.total} total</strong>
-          </div>
-          <div className="cardHint" style={{ marginBottom: 16 }}>
-            {form.customerName} &middot; {form.phone} &middot; pickup {SLOT_OPTIONS.find(([k]) => k === form.requestedSlot)?.[1] || form.requestedSlot}
+              {form.notes && <div className="cardHint" style={{ marginTop: 3 }}>Notes: {form.notes}</div>}
+            </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button type="button" className="button secondary" onClick={() => setStage("build")} style={{ flex: 1, justifyContent: "center" }}>Back &amp; edit</button>
@@ -2378,59 +2409,82 @@ function NewTakeawayModal({ onClose, onSaved }) {
         <div className="modalHeader"><h3>New takeaway order</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
         {error && <div className="loginError">{error}</div>}
 
-        <div className="formGrid" style={{ marginBottom: 14 }}>
-          <div className="field"><label>Item</label>
-            <select className="select" value={pendingItemId} onChange={(e) => { setPendingItemId(e.target.value); setPendingVariant(""); }}>
-              <option value="">Select a menu item...</option>
-              {available.map((i) => <option key={i.id} value={i.id}>{i.name} -- ${(i.price_cents / 100).toFixed(2)}</option>)}
-            </select>
-          </div>
-          {pendingItem?.size_options?.length > 0 ? (
-            <div className="field"><label>Size</label>
-              <select className="select" value={pendingVariant} onChange={(e) => setPendingVariant(e.target.value)}>
-                <option value="">Regular -- ${(pendingItem.price_cents / 100).toFixed(2)}</option>
-                {pendingItem.size_options.map((o) => <option key={o.label} value={o.label}>{o.label} -- ${(o.price_cents / 100).toFixed(2)}</option>)}
+        <div className="modalSection">
+          <div className="modalSectionTitle">1. Add items</div>
+          <div className="formGrid">
+            <div className="field" style={{ gridColumn: pendingItem?.size_options?.length > 0 ? "auto" : "1 / -1" }}>
+              <label>Menu item</label>
+              <select className="select" value={pendingItemId} onChange={(e) => { setPendingItemId(e.target.value); setPendingVariant(""); }}>
+                <option value="">Select a menu item...</option>
+                {available.map((i) => <option key={i.id} value={i.id}>{i.name} -- ${(i.price_cents / 100).toFixed(2)}</option>)}
               </select>
             </div>
-          ) : <div className="field" />}
-          <button type="button" className="button secondary small" onClick={addLine} disabled={!pendingItemId} style={{ gridColumn: "1 / -1" }}>
-            <Plus size={14} />Add to order
-          </button>
+            {pendingItem?.size_options?.length > 0 && (
+              <div className="field"><label>Size</label>
+                <select className="select" value={pendingVariant} onChange={(e) => setPendingVariant(e.target.value)}>
+                  <option value="">Regular -- ${(pendingItem.price_cents / 100).toFixed(2)}</option>
+                  {pendingItem.size_options.map((o) => <option key={o.label} value={o.label}>{o.label} -- ${(o.price_cents / 100).toFixed(2)}</option>)}
+                </select>
+              </div>
+            )}
+            <button type="button" className="checkAvailabilityBtn" onClick={addLine} disabled={!pendingItemId} style={{ gridColumn: "1 / -1" }}>
+              <Plus size={15} />Add to order
+            </button>
+          </div>
         </div>
 
-        {lines.length > 0 && (
-          <div style={{ marginBottom: 14, display: "flex", flexDirection: "column", gap: 6 }}>
-            {lines.map((line) => {
-              const item = items.find((i) => i.id === line.menuItemId);
-              return (
-                <div key={lineKey(line)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5, padding: "6px 0" }}>
-                  <span>{item?.name}{line.variantLabel ? ` (${line.variantLabel})` : ""}</span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <button type="button" className="button ghost small" onClick={() => changeQuantity(line, -1)}>&minus;</button>
-                    <span style={{ minWidth: 16, textAlign: "center" }}>{line.quantity}</span>
-                    <button type="button" className="button ghost small" onClick={() => changeQuantity(line, 1)}>+</button>
-                    <button type="button" className="button ghost small" onClick={() => removeLine(line)}><X size={13} /></button>
-                  </div>
-                </div>
-              );
-            })}
+        <div className="modalSection">
+          <div className="modalSectionTitle">
+            2. Order {lines.length > 0 && <span className="cardHint">({lines.reduce((n, l) => n + l.quantity, 0)} item{lines.reduce((n, l) => n + l.quantity, 0) === 1 ? "" : "s"})</span>}
           </div>
-        )}
+          {lines.length === 0 ? (
+            <p className="cardHint" style={{ padding: "10px 0" }}>No items added yet -- pick a menu item above and click Add to order.</p>
+          ) : (
+            <>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {lines.map((line) => {
+                  const item = items.find((i) => i.id === line.menuItemId);
+                  const unit = lineUnitPriceCents(line);
+                  return (
+                    <div key={lineKey(line)} className="orderLine">
+                      <div style={{ flex: 1 }}>
+                        <strong style={{ fontSize: 13.5 }}>{item?.name}{line.variantLabel ? ` (${line.variantLabel})` : ""}</strong>
+                        <div className="cardHint">${(unit / 100).toFixed(2)} each</div>
+                      </div>
+                      <Stepper value={line.quantity} min={1} max={99} onChange={(next) => changeQuantity(line, next - line.quantity)} />
+                      <strong style={{ fontSize: 13.5, minWidth: 58, textAlign: "right" }}>${((unit * line.quantity) / 100).toFixed(2)}</strong>
+                      <button type="button" className="button ghost small" title="Remove" onClick={() => removeLine(line)}><X size={13} /></button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="orderTotalRow">
+                <span className="cardHint">Estimated subtotal (5% service added at pricing)</span>
+                <strong>${(runningSubtotalCents / 100).toFixed(2)}</strong>
+              </div>
+            </>
+          )}
+        </div>
 
-        <form onSubmit={(e) => { e.preventDefault(); getQuote(); }} className="formGrid">
-          <div className="field"><label>Customer name</label><input className="textInput" required value={form.customerName} onChange={(e) => setForm({ ...form, customerName: e.target.value })} /></div>
-          <div className="field"><label>Phone</label><input className="textInput" required value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
-          <div className="field" style={{ gridColumn: "1 / -1" }}>
-            <label>Pickup slot</label>
-            <div className="pillRow">
-              {SLOT_OPTIONS.map(([k, l]) => (
-                <button type="button" key={k} className={`button small ${form.requestedSlot === k ? "primary" : "secondary"}`} onClick={() => setForm({ ...form, requestedSlot: k })}>{l}</button>
-              ))}
+        <form onSubmit={(e) => { e.preventDefault(); getQuote(); }}>
+          <div className="modalSection">
+            <div className="modalSectionTitle">3. Customer &amp; pickup</div>
+            <div className="formGrid">
+              <div className="field"><label>Customer name</label><input className="textInput" required value={form.customerName} onChange={(e) => setForm({ ...form, customerName: e.target.value })} /></div>
+              <div className="field"><label>Phone</label><input className="textInput" required value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
+              <div className="field" style={{ gridColumn: "1 / -1" }}>
+                <label>Pickup slot</label>
+                <div className="pillRow">
+                  {SLOT_OPTIONS.map(([k, l]) => (
+                    <button type="button" key={k} className={`button small ${form.requestedSlot === k ? "primary" : "secondary"}`} onClick={() => setForm({ ...form, requestedSlot: k })}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="field" style={{ gridColumn: "1 / -1" }}><label>Notes</label><textarea className="textarea" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
             </div>
           </div>
-          <div className="field" style={{ gridColumn: "1 / -1" }}><label>Notes</label><textarea className="textarea" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
-          <button className="button primary" type="submit" disabled={quoting || lines.length === 0} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>
-            {quoting ? "Pricing..." : "Review & price order"}
+          <button className="button primary" type="submit" disabled={quoting || lines.length === 0} style={{ width: "100%", justifyContent: "center", marginTop: 4 }}>
+            {quoting ? "Pricing..." : lines.length === 0 ? "Add at least one item" : "Review & price order"}
           </button>
         </form>
       </div>
