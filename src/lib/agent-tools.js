@@ -171,11 +171,18 @@ export const TOOLS = {
   },
 
   async create_group_booking_request({ restaurantId, customerName, phone, partySize, date, time, preference, notes }) {
-    const request = await createGroupRequest({
-      restaurantId, customerName, phone, partySize,
-      requestedDate: date, requestedTime: time, seatingPreference: preference, notes
-    });
-    return { request_id: request.id, status: request.status };
+    try {
+      const request = await createGroupRequest({
+        restaurantId, customerName, phone, partySize,
+        requestedDate: date, requestedTime: time, seatingPreference: preference, notes
+      });
+      return { created: true, request_id: request.id, status: request.status };
+    } catch (error) {
+      // The full-floor 7-day notice rule throws from here -- without this catch it was an
+      // uncaught 500 instead of a message the agent could read back to the guest.
+      if (error instanceof BookingError) return { created: false, error: error.message };
+      throw error;
+    }
   },
 
   async get_reservation_status({ restaurantId, bookingRef, phone }) {
