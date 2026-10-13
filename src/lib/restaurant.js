@@ -80,28 +80,42 @@ export async function updateBookingRules(restaurantId, patch) {
   return result.rows[0];
 }
 
-/** Returns { open: "11:00", close: "22:30" } or null when closed, honoring special_hours overrides. */
-export function openingWindowForDate(settings, isoDate) {
+/** Returns this date's open windows as [{open:"11:00", close:"14:00", label?}, ...], or null
+ * when closed, honoring special_hours overrides. A day can have more than one window (e.g.
+ * lunch 11-2 and dinner 5-10 with a gap between), so this always returns a list -- never a
+ * single {open,close} pair. Also understands the older single-window shape ({open, close,
+ * closed}) that predates multi-window support, so already-saved settings keep working. */
+export function windowsForDate(settings, isoDate) {
   const special = (settings.special_hours || []).find((entry) => entry.date === isoDate);
   if (special) {
     if (special.closed) return null;
-    return { open: special.open, close: special.close, label: special.label };
+    if (Array.isArray(special.windows) && special.windows.length) return special.windows;
+    if (special.open && special.close) return [{ open: special.open, close: special.close, label: special.label }];
+    return null;
   }
   const weekday = WEEKDAY_KEYS[new Date(`${isoDate}T00:00:00Z`).getUTCDay() === 0 ? 6 : new Date(`${isoDate}T00:00:00Z`).getUTCDay() - 1];
   const day = settings.opening_hours?.[weekday];
   if (!day || day.closed) return null;
-  return { open: day.open, close: day.close };
+  if (Array.isArray(day.windows) && day.windows.length) return day.windows;
+  if (day.open && day.close) return [{ open: day.open, close: day.close }]; // legacy single-window shape
+  return null;
+}
+
+/** Back-compat alias: returns just the first window (or null). Prefer windowsForDate. */
+export function openingWindowForDate(settings, isoDate) {
+  const windows = windowsForDate(settings, isoDate);
+  return windows ? windows[0] : null;
 }
 
 export function isWithinOpeningHours(settings, isoDate, hhmm, durationMinutes) {
-  const window = openingWindowForDate(settings, isoDate);
-  if (!window) return { ok: false, reason: "The restaurant is closed on that date." };
+  const windows = windowsForDate(settings, isoDate);
+  if (!windows || windows.length === 0) return { ok: false, reason: "The restaurant is closed on that date." };
   const start = toMinutes(hhmm);
   const end = start + durationMinutes;
-  const openMin = toMinutes(window.open);
-  const closeMin = toMinutes(window.close);
-  if (start < openMin || end > closeMin) {
-    return { ok: false, reason: `We are open from ${window.open} to ${window.close} on that date.` };
+  const fits = windows.some((w) => start >= toMinutes(w.open) && end <= toMinutes(w.close));
+  if (!fits) {
+    const ranges = windows.map((w) => `${w.open} to ${w.close}`).join(" and ");
+    return { ok: false, reason: `We are open from ${ranges} on that date.` };
   }
   return { ok: true };
 }

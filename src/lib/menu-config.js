@@ -89,7 +89,7 @@ export async function getDaySlotSchedule(restaurantId, date) {
     if (!row) { result[slot] = { mode: "default", items: null, closed: false }; continue; }
     if (row.closed) { result[slot] = { mode: "closed", items: null, closed: true }; continue; }
     if (row.item_ids_override) {
-      result[slot] = { mode: "custom", items: row.item_ids_override, configurationId: row.configuration_id, closed: false };
+      result[slot] = { mode: "custom", items: row.item_ids_override, configurationId: row.configuration_id, configurationName: row.configuration_name, closed: false };
     } else if (row.configuration_id) {
       result[slot] = { mode: "configuration", configurationId: row.configuration_id, configurationName: row.configuration_name, closed: false };
     } else {
@@ -173,11 +173,22 @@ export async function getMenuForDateSlot(restaurantId, date, slot) {
   return { mode: "default", items };
 }
 
+/** One row per date in range that has any per-slot setup, for the calendar's month grid.
+ * Reads menu_slot_schedule (the per-slot table the app actually writes) rather than the
+ * older whole-day menu_daily_schedule, and flags dates that use a special-occasion master
+ * so the calendar can mark them differently from an ordinary configured day. */
 export async function getScheduleForRange(restaurantId, from, to) {
   const result = await query(
-    `select s.schedule_date, c.id as configuration_id, c.name as configuration_name
-     from menu_daily_schedule s join menu_configurations c on c.id = s.configuration_id
+    `select s.schedule_date,
+            count(*)::int as configured_slots,
+            bool_or(s.closed) as has_closed,
+            bool_or(coalesce(c.is_special, false)) as has_special,
+            (array_agg(c.name order by c.is_special desc nulls last)
+               filter (where c.name is not null))[1] as headline_configuration
+     from menu_slot_schedule s
+     left join menu_configurations c on c.id = s.configuration_id
      where s.restaurant_id = $1 and s.schedule_date between $2 and $3
+     group by s.schedule_date
      order by s.schedule_date`,
     [restaurantId, from, to]
   );

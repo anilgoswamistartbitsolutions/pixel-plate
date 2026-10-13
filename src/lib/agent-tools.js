@@ -1,4 +1,4 @@
-import { getRestaurant, getSettings, openingWindowForDate, listExtraInfo } from "@/lib/restaurant";
+import { getRestaurant, getSettings, windowsForDate, listExtraInfo } from "@/lib/restaurant";
 import { getDailySpecials } from "@/lib/menu";
 import { checkAvailability, toWindow } from "@/lib/availability";
 import { createReservation, cancelReservation, modifyReservation, getReservationStatus, BookingError } from "@/lib/reservations";
@@ -39,11 +39,13 @@ export const TOOLS = {
     };
   },
 
+  // A day can have more than one open window (e.g. lunch 11-2, closed, dinner 5-10), so this
+  // always returns a `windows` list -- read every entry before telling a caller the hours.
   async get_opening_hours({ restaurantId, date }) {
     const settings = await getSettings(restaurantId);
     const isoDate = date || new Date().toISOString().slice(0, 10);
-    const window = openingWindowForDate(settings, isoDate);
-    return window ? { date: isoDate, open: window.open, close: window.close } : { date: isoDate, closed: true };
+    const windows = windowsForDate(settings, isoDate);
+    return windows ? { date: isoDate, closed: false, windows } : { date: isoDate, closed: true, windows: [] };
   },
 
   // slot: 'morning' | 'midday' | 'evening' (the restaurant's three daily serving windows --

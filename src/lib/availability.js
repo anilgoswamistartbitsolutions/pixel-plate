@@ -234,13 +234,32 @@ export async function listTableOptions({ restaurantId, startAt, endAt, partySize
   const { withTransaction } = await import("@/lib/db");
   return withTransaction(async (client) => {
     const tables = await loadTablesWithFreeSeats(client, restaurantId, startAt, endAt);
+    const floors = (await client.query(
+      "select id, name, sort_order from floors where restaurant_id = $1",
+      [restaurantId]
+    )).rows;
+    const floorById = new Map(floors.map((f) => [String(f.id), f]));
+
+    // Every table with at least one free seat -- not only the ones big enough for the whole
+    // party on their own, because staff split a party across tables (3 here, 4 there) from
+    // this same list; a party of 7 across two 4-tops would otherwise show as "no options".
+    // fitsWholeParty flags the tables that could seat everyone by themselves.
     return tables
-      .filter((t) => t.freeSeats.length >= partySize)
-      .sort((a, b) => a.capacity - b.capacity)
+      .filter((t) => t.freeSeats.length > 0)
+      .sort((a, b) => {
+        const sa = floorById.get(String(a.floor_id))?.sort_order ?? 999;
+        const sb = floorById.get(String(b.floor_id))?.sort_order ?? 999;
+        if (sa !== sb) return sa - sb;
+        if (a.capacity !== b.capacity) return a.capacity - b.capacity;
+        return String(a.code).localeCompare(String(b.code));
+      })
       .map((t) => ({
         id: t.id, code: t.code, displayName: t.display_name, capacity: t.capacity,
         tableType: t.table_type, shareable: t.shareable, freeSeatCount: t.freeSeats.length,
-        fullTable: t.freeSeats.length === t.seats.length
+        fullTable: t.freeSeats.length === t.seats.length,
+        fitsWholeParty: t.freeSeats.length >= partySize,
+        floorId: t.floor_id ? Number(t.floor_id) : null,
+        floorName: floorById.get(String(t.floor_id))?.name || "Unassigned"
       }));
   });
 }

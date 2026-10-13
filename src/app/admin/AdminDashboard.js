@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   LayoutGrid, Grid3x3, CalendarClock, Users2, UtensilsCrossed, Building2,
   Mic, PhoneCall, BarChart3, Settings, LogOut, Plus, X, Check, Ban,
-  MapPin, Clock, ShieldCheck, Sparkles, ShoppingBag, Layers, CalendarDays
+  MapPin, Clock, ShieldCheck, Sparkles, ShoppingBag, Layers, CalendarDays, ChevronRight
 } from "lucide-react";
 import { apiFetch, getStaff, clearSession } from "@/lib/api-client";
 import VoiceAgentWidget from "@/components/VoiceAgentWidget";
@@ -279,17 +279,20 @@ function FloorPlanView({ notify, staff }) {
       {floors.length === 0 ? (
         <EmptyState title="No floors yet" hint="Add a floor (e.g. Main Dining, Patio) to start placing tables." />
       ) : (
-        <div className="grid cols-3">
+        <div className="grid cols-2">
           {floors.map((floor) => {
             const floorTables = tables.filter((t) => t.floor_id === floor.id);
             const activeTables = floorTables.filter((t) => t.active);
+            const inactiveTables = floorTables.filter((t) => !t.active);
             const capacity = activeTables.reduce((sum, t) => sum + t.capacity, 0);
             return (
-              <div key={floor.id} className="card" style={{ cursor: "pointer" }} onClick={() => setOpenFloorId(floor.id)}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div>
-                    <strong style={{ fontSize: 15 }}>{floor.name}</strong>
-                    <p className="cardHint" style={{ marginTop: 4 }}>{activeTables.length} active table{activeTables.length === 1 ? "" : "s"} &middot; {capacity} seats</p>
+              <div key={floor.id} className="card" style={{ cursor: "pointer", padding: 20 }} onClick={() => setOpenFloorId(floor.id)}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{ width: 40, height: 40, borderRadius: 11, background: "var(--brand-soft)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <Layers size={19} style={{ color: "var(--brand-dark)" }} />
+                    </div>
+                    <strong style={{ fontSize: 16.5 }}>{floor.name}</strong>
                   </div>
                   {isSuperAdmin && (
                     <button className="button ghost small" onClick={(e) => { e.stopPropagation(); deleteFloor(floor); }} title="Delete floor">
@@ -297,7 +300,16 @@ function FloorPlanView({ notify, staff }) {
                     </button>
                   )}
                 </div>
-                <button className="button secondary small" style={{ marginTop: 12 }} onClick={() => setOpenFloorId(floor.id)}>Open floor &rarr;</button>
+
+                {floor.description && <p className="cardHint" style={{ marginTop: 12, lineHeight: 1.55, fontSize: 13 }}>{floor.description}</p>}
+
+                <div className="pillRow" style={{ marginTop: 14 }}>
+                  <span className="pill">{activeTables.length} table{activeTables.length === 1 ? "" : "s"}</span>
+                  <span className="pill">{capacity} seat{capacity === 1 ? "" : "s"}</span>
+                  {inactiveTables.length > 0 && <span className="pill">{inactiveTables.length} deactivated</span>}
+                </div>
+
+                <button className="button secondary small" style={{ marginTop: 16 }} onClick={() => setOpenFloorId(floor.id)}>Open floor &rarr;</button>
               </div>
             );
           })}
@@ -368,6 +380,7 @@ function FloorDetailView({ floor, tables, isSuperAdmin, notify, onBack, onReload
         <div>
           <h2>{floor?.name}</h2>
           <p>{editMode ? "Edit mode: drag tables to arrange the room -- position saves automatically." : "Click a table to see seats and reservations. Turn on Edit mode to move or add tables."}</p>
+          {floor?.description && <p className="cardHint" style={{ marginTop: 6, maxWidth: 560, lineHeight: 1.5 }}>{floor.description}</p>}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button className={`button ${editMode ? "primary" : "secondary"}`} onClick={() => setEditMode((v) => !v)}>
@@ -578,6 +591,7 @@ function AddTableModal({ floors, defaultFloorId, onClose, onSaved }) {
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalCard" onClick={(e) => e.stopPropagation()}>
         <div className="modalHeader"><h3>Add table</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        <div className="modalBody">
         {error && <div className="loginError">{error}</div>}
         <form onSubmit={submit} className="formGrid">
           <div className="field"><label>Permanent code (e.g. L)</label><input className="textInput" required value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} /></div>
@@ -611,6 +625,7 @@ function AddTableModal({ floors, defaultFloorId, onClose, onSaved }) {
           </div>
           <button className="button primary" type="submit" disabled={saving} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Saving..." : "Create table"}</button>
         </form>
+        </div>
       </div>
     </div>
   );
@@ -637,11 +652,13 @@ function AddFloorModal({ onClose, onSaved }) {
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalCard" onClick={(e) => e.stopPropagation()}>
         <div className="modalHeader"><h3>Add floor</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        <div className="modalBody">
         {error && <div className="loginError">{error}</div>}
         <form onSubmit={submit} className="formGrid one">
           <div className="field"><label>Floor name</label><input className="textInput" required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ocean View Patio" /></div>
           <button className="button primary" type="submit" disabled={saving} style={{ justifyContent: "center" }}>{saving ? "Creating..." : "Create floor"}</button>
         </form>
+        </div>
       </div>
     </div>
   );
@@ -674,6 +691,7 @@ function EditTableModal({ table, floors, onClose, onSaved }) {
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalCard" onClick={(e) => e.stopPropagation()}>
         <div className="modalHeader"><h3>Edit table {table.code}</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        <div className="modalBody">
         {error && <div className="loginError">{error}</div>}
         <form onSubmit={submit} className="formGrid">
           <div className="field" style={{ gridColumn: "1 / -1" }}><label>Display name</label><input className="textInput" required value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} /></div>
@@ -715,6 +733,7 @@ function EditTableModal({ table, floors, onClose, onSaved }) {
           </div>
           <button className="button primary" type="submit" disabled={saving} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Saving..." : "Save changes"}</button>
         </form>
+        </div>
       </div>
     </div>
   );
@@ -922,6 +941,7 @@ function EditReservationModal({ reservation, onClose, onSaved }) {
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalCard" onClick={(e) => e.stopPropagation()}>
         <div className="modalHeader"><h3>Edit reservation {reservation.booking_ref}</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        <div className="modalBody">
         {error && <div className="loginError">{error}</div>}
         <div className="cardHint" style={{ marginBottom: 14 }}>{reservation.customer_name} &middot; {reservation.phone}</div>
         <form onSubmit={submit} className="formGrid">
@@ -938,6 +958,7 @@ function EditReservationModal({ reservation, onClose, onSaved }) {
           </div>
           <button className="button primary" type="submit" disabled={saving} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Checking availability..." : "Save changes"}</button>
         </form>
+        </div>
       </div>
     </div>
   );
@@ -951,6 +972,7 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
   // 3 on table B"), not just which tables to use.
   const [tableCounts, setTableCounts] = useState({});
   const [options, setOptions] = useState(null);
+  const [optionFilter, setOptionFilter] = useState("all"); // "all" | "fits"
   const [checking, setChecking] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -979,6 +1001,20 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
   const assignedTotal = Object.values(tableCounts).reduce((sum, n) => sum + (Number(n) || 0), 0);
   const anyAssigned = Object.values(tableCounts).some((n) => Number(n) > 0);
   const splitValid = !anyAssigned || assignedTotal === form.partySize;
+
+  // Available tables bucketed by floor, so staff scan "Ocean View" / "Rooftop" rather than one
+  // long flat list across every room. Floor order follows the backend's sort (floor sort_order).
+  const groupedOptions = (() => {
+    if (!options) return [];
+    const filtered = optionFilter === "fits" ? options.filter((o) => o.fitsWholeParty) : options;
+    const groups = new Map();
+    for (const option of filtered) {
+      const key = option.floorName || "Unassigned";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(option);
+    }
+    return Array.from(groups.entries());
+  })();
 
   function toggleTable(optionId, maxFree) {
     setTableCounts((prev) => {
@@ -1038,6 +1074,7 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalCard" onClick={(e) => e.stopPropagation()}>
         <div className="modalHeader"><h3>New reservation</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        <div className="modalBody">
         {error && <div className="loginError">{error}</div>}
         <form onSubmit={submit} className="formGrid">
           <div className="field"><label>Guest name</label><input className="textInput" required value={form.customerName} onChange={(e) => setForm({ ...form, customerName: e.target.value })} /></div>
@@ -1089,26 +1126,53 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
               ) : (
                 <>
                   <label>
-                    {options.length} table{options.length === 1 ? "" : "s"} available -- check a table to seat guests there, then
-                    set how many with the +/- (e.g. 3 on one table, 3 on another). Leave none checked to let us pick the best fit.
+                    {options.length} table{options.length === 1 ? "" : "s"} free, grouped by floor -- check a table to seat guests there,
+                    then set how many with the +/- (e.g. 3 on one table, 4 on another). Leave none checked to let us pick the best fit.
                   </label>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
-                    {options.map((o) => {
-                      const count = tableCounts[o.id] || 0;
-                      const checked = count > 0;
-                      const maxForThis = Math.min(o.freeSeatCount, form.partySize);
-                      return (
-                        <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: `1px solid ${checked ? "var(--brand)" : "var(--line)"}`, borderRadius: "var(--radius-sm)", background: checked ? "var(--brand-soft)" : "#fff" }}>
-                          <input type="checkbox" checked={checked} onChange={() => toggleTable(o.id, o.freeSeatCount)} />
-                          <div style={{ flex: 1, cursor: "pointer" }} onClick={() => toggleTable(o.id, o.freeSeatCount)}>
-                            <span style={{ fontSize: 13.5, fontWeight: 600 }}>{o.displayName}</span>
-                            <div className="cardHint">{o.capacity} seats &middot; {o.freeSeatCount} free{o.fullTable ? " &middot; full table" : ""}</div>
-                          </div>
-                          <Stepper value={count} min={0} max={maxForThis} disabled={!checked} onChange={(next) => setTableCount(o.id, o.freeSeatCount, next)} />
-                        </div>
-                      );
-                    })}
+
+                  <div className="pillRow" style={{ margin: "8px 0 10px" }}>
+                    <button type="button" className={`button small ${optionFilter === "all" ? "primary" : "secondary"}`} onClick={() => setOptionFilter("all")}>
+                      All free tables
+                    </button>
+                    <button type="button" className={`button small ${optionFilter === "fits" ? "primary" : "secondary"}`} onClick={() => setOptionFilter("fits")}>
+                      Fits all {form.partySize} alone ({options.filter((o) => o.fitsWholeParty).length})
+                    </button>
                   </div>
+
+                  {groupedOptions.length === 0 ? (
+                    <div className="cardHint" style={{ background: "var(--amber-soft)", padding: 10, borderRadius: 10, color: "#9a6d13" }}>
+                      No single table seats {form.partySize} on its own -- switch to &ldquo;All free tables&rdquo; to split the party across two or more.
+                    </div>
+                  ) : groupedOptions.map(([floorName, floorOptions]) => {
+                    const floorFree = floorOptions.reduce((sum, o) => sum + o.freeSeatCount, 0);
+                    return (
+                      <div key={floorName} style={{ marginBottom: 12 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                          <strong style={{ fontSize: 12.5 }}><Layers size={12} style={{ verticalAlign: "-1px", marginRight: 5 }} />{floorName}</strong>
+                          <span className="cardHint">{floorOptions.length} table{floorOptions.length === 1 ? "" : "s"} &middot; {floorFree} seats free</span>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {floorOptions.map((o) => {
+                            const count = tableCounts[o.id] || 0;
+                            const checked = count > 0;
+                            const maxForThis = Math.min(o.freeSeatCount, form.partySize);
+                            return (
+                              <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: `1px solid ${checked ? "var(--brand)" : "var(--line)"}`, borderRadius: "var(--radius-sm)", background: checked ? "var(--brand-soft)" : "#fff" }}>
+                                <input type="checkbox" checked={checked} onChange={() => toggleTable(o.id, o.freeSeatCount)} />
+                                <div style={{ flex: 1, cursor: "pointer" }} onClick={() => toggleTable(o.id, o.freeSeatCount)}>
+                                  <span style={{ fontSize: 13.5, fontWeight: 600 }}>{o.displayName}</span>
+                                  {o.fitsWholeParty && <span className="badge active" style={{ marginLeft: 6 }}>Fits all {form.partySize}</span>}
+                                  <div className="cardHint">{o.capacity} seats &middot; {o.freeSeatCount} free{o.fullTable ? " · full table" : ""}</div>
+                                </div>
+                                <Stepper value={count} min={0} max={maxForThis} disabled={!checked} onChange={(next) => setTableCount(o.id, o.freeSeatCount, next)} />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+
                   <div className="cardHint" style={{ marginTop: 8, color: anyAssigned && !splitValid ? "var(--danger)" : undefined }}>
                     {assignedTotal} of {form.partySize} guests assigned{anyAssigned && !splitValid ? " -- must match exactly before booking" : ""}
                   </div>
@@ -1120,6 +1184,7 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
           <div className="field" style={{ gridColumn: "1 / -1" }}><label>Notes</label><textarea className="textarea" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
           <button className="button primary" type="submit" disabled={saving || !splitValid} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Booking..." : "Check & book"}</button>
         </form>
+        </div>
       </div>
     </div>
   );
@@ -1249,6 +1314,7 @@ function AddLeadModal({ onClose, onSaved }) {
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalCard" onClick={(e) => e.stopPropagation()}>
         <div className="modalHeader"><h3>New lead</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        <div className="modalBody">
         {error && <div className="loginError">{error}</div>}
         <form onSubmit={submit} className="formGrid">
           <div className="field"><label>Lead type</label>
@@ -1279,6 +1345,7 @@ function AddLeadModal({ onClose, onSaved }) {
           <div className="field" style={{ gridColumn: "1 / -1" }}><label>Notes</label><textarea className="textarea" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
           <button className="button primary" type="submit" disabled={saving} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Creating..." : "Create lead"}</button>
         </form>
+        </div>
       </div>
     </div>
   );
@@ -1287,28 +1354,65 @@ function AddLeadModal({ onClose, onSaved }) {
 /* ====================================================================== Menu */
 
 function MenuView({ notify }) {
-  const [tab, setTab] = useState("items");
-  const [itemFilter, setItemFilter] = useState("all");
+  const [tab, setTab] = useState("today");
+
+  return (
+    <div>
+      <div className="sectionHeader">
+        <div><h2>Menu &amp; daily specials</h2><p>What the voice agent is allowed to recommend -- nothing it isn't configured here.</p></div>
+      </div>
+
+      <div className="stepStrip">
+        <div className="stepStripItem"><span className="stepStripNum">1</span>Create every item once in <strong>All Items</strong></div>
+        <ChevronRight size={14} className="stepStripArrow" />
+        <div className="stepStripItem"><span className="stepStripNum">2</span>Group items into a <strong>Master</strong> (e.g. &ldquo;Weekday Lunch&rdquo;)</div>
+        <ChevronRight size={14} className="stepStripArrow" />
+        <div className="stepStripItem"><span className="stepStripNum">3</span>On <strong>Today</strong> or the <strong>Calendar</strong>, load a master in one click -- or add items one by one</div>
+      </div>
+
+      <div className="tabRow">
+        <button className={`tabChip ${tab === "today" ? "active" : ""}`} onClick={() => setTab("today")}><Clock size={13} style={{ verticalAlign: "-2px", marginRight: 5 }} />Today&rsquo;s Items</button>
+        <button className={`tabChip ${tab === "config" ? "active" : ""}`} onClick={() => setTab("config")}><Layers size={13} style={{ verticalAlign: "-2px", marginRight: 5 }} />Masters</button>
+        <button className={`tabChip ${tab === "calendar" ? "active" : ""}`} onClick={() => setTab("calendar")}><CalendarDays size={13} style={{ verticalAlign: "-2px", marginRight: 5 }} />Calendar</button>
+        <button className={`tabChip ${tab === "allItems" ? "active" : ""}`} onClick={() => setTab("allItems")}><UtensilsCrossed size={13} style={{ verticalAlign: "-2px", marginRight: 5 }} />All Items</button>
+      </div>
+
+      {tab === "today" && <TodaysItemsPanel />}
+      {tab === "config" && <MenuConfigurationsPanelWrapper notify={notify} />}
+      {tab === "calendar" && <MenuCalendarPanel notify={notify} />}
+      {tab === "allItems" && <AllItemsPanel notify={notify} />}
+    </div>
+  );
+}
+
+// MenuConfigurationsPanel needs the item catalog to build/edit masters -- fetches it once here
+// rather than making every tab in MenuView load items whether it needs them or not.
+function MenuConfigurationsPanelWrapper({ notify }) {
+  const [items, setItems] = useState(null);
+  useEffect(() => { apiFetch("/api/menu/items").then(setItems).catch(() => {}); }, []);
+  if (!items) return <LoadingBlock />;
+  return <MenuConfigurationsPanel items={items} notify={notify} />;
+}
+
+function AllItemsPanel({ notify }) {
   const [items, setItems] = useState(null);
   const [categories, setCategories] = useState([]);
-  const [configuredIds, setConfiguredIds] = useState(new Set());
   const [showAdd, setShowAdd] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
   const [err, setErr] = useState("");
 
   const load = useCallback(() => {
-    Promise.all([apiFetch("/api/menu/items"), apiFetch("/api/menu/categories"), apiFetch("/api/menu/configurations")])
-      .then(([i, c, configs]) => {
-        setItems(i);
-        setCategories(c);
-        setConfiguredIds(new Set(configs.flatMap((cfg) => cfg.item_ids.map(Number))));
-      })
+    Promise.all([apiFetch("/api/menu/items"), apiFetch("/api/menu/categories")])
+      .then(([i, c]) => { setItems(i); setCategories(c); })
       .catch((e) => setErr(e.message));
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  async function toggleSoldOut(item) {
+  async function removeItem(item) {
+    if (!confirm(`Delete "${item.name}" from the menu? This can't be undone.`)) return;
     try {
-      await apiFetch(`/api/menu/items/${item.id}`, { method: "PATCH", body: JSON.stringify({ soldOut: !item.sold_out }) });
+      await apiFetch(`/api/menu/items/${item.id}`, { method: "DELETE" });
+      notify("Item deleted");
       load();
     } catch (e) { notify(e.message, "error"); }
   }
@@ -1316,37 +1420,20 @@ function MenuView({ notify }) {
   if (err) return <ErrorBlock message={err} />;
   if (!items) return <LoadingBlock />;
 
-  const filteredItems = itemFilter === "configured" ? items.filter((i) => configuredIds.has(i.id)) : items;
-  const byCategory = categories.map((c) => ({ ...c, items: filteredItems.filter((i) => i.category_id === c.id) }));
+  const byCategory = categories.map((c) => ({ ...c, items: items.filter((i) => i.category_id === c.id) }));
 
   return (
     <div>
-      <div className="sectionHeader">
-        <div><h2>Menu &amp; daily specials</h2><p>What the voice agent is allowed to recommend -- nothing it isn't configured here.</p></div>
-        {tab === "items" && <button className="button primary" onClick={() => setShowAdd(true)}><Plus size={15} />Add item</button>}
+      <div className="sectionHeader" style={{ marginBottom: 14 }}>
+        <div><p className="cardHint">Every dish the restaurant can ever serve -- build masters and daily menus from this list. Day-to-day sold-out status is set from Today&rsquo;s Items or the Calendar, not here.</p></div>
+        <button className="button primary" onClick={() => setShowAdd(true)}><Plus size={15} />Add item</button>
       </div>
 
-      <div className="tabRow">
-        <button className={`tabChip ${tab === "items" ? "active" : ""}`} onClick={() => setTab("items")}>Items</button>
-        <button className={`tabChip ${tab === "config" ? "active" : ""}`} onClick={() => setTab("config")}><Layers size={13} style={{ verticalAlign: "-2px", marginRight: 5 }} />Configurations</button>
-        <button className={`tabChip ${tab === "calendar" ? "active" : ""}`} onClick={() => setTab("calendar")}><CalendarDays size={13} style={{ verticalAlign: "-2px", marginRight: 5 }} />Calendar</button>
-      </div>
-
-      {tab === "config" && <MenuConfigurationsPanel items={items} notify={notify} />}
-      {tab === "calendar" && <MenuCalendarPanel notify={notify} />}
-
-      {tab === "items" && (
-        <div className="pillRow" style={{ marginBottom: 16 }}>
-          <button className={`button small ${itemFilter === "all" ? "primary" : "secondary"}`} onClick={() => setItemFilter("all")}>All items</button>
-          <button className={`button small ${itemFilter === "configured" ? "primary" : "secondary"}`} onClick={() => setItemFilter("configured")}>In a configuration</button>
-        </div>
+      {items.length === 0 && (
+        <EmptyState title="No items" hint="Add a menu item to get started." />
       )}
 
-      {tab === "items" && filteredItems.length === 0 && (
-        <EmptyState title="No items" hint={itemFilter === "configured" ? "No items belong to a saved configuration yet." : "Add a menu item to get started."} />
-      )}
-
-      {tab === "items" && byCategory.map((cat) => cat.items.length > 0 && (
+      {byCategory.map((cat) => cat.items.length > 0 && (
         <div key={cat.id} style={{ marginBottom: 22 }}>
           <div className="cardTitle" style={{ marginBottom: 10 }}>{cat.name}</div>
           <div className="grid cols-3">
@@ -1361,9 +1448,10 @@ function MenuView({ notify }) {
                   {item.dietary_tags?.map((t) => <span key={t} className="pill">{t}</span>)}
                   {item.complimentary && <span className="pill">complimentary</span>}
                 </div>
-                <button className={`button small ${item.sold_out ? "secondary" : "danger"}`} onClick={() => toggleSoldOut(item)}>
-                  {item.sold_out ? "Mark back in stock" : "Mark sold out"}
-                </button>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <button className="button secondary small" onClick={() => setEditingItem(item)}>Edit</button>
+                  <button className="button ghost small" onClick={() => removeItem(item)}>Delete</button>
+                </div>
               </div>
             ))}
           </div>
@@ -1371,6 +1459,7 @@ function MenuView({ notify }) {
       ))}
 
       {showAdd && <AddMenuItemModal categories={categories} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); notify("Menu item saved"); load(); }} />}
+      {editingItem && <AddMenuItemModal categories={categories} editingItem={editingItem} onClose={() => setEditingItem(null)} onSaved={() => { setEditingItem(null); notify("Menu item updated"); load(); }} />}
     </div>
   );
 }
@@ -1393,14 +1482,14 @@ function MenuConfigurationsPanel({ items, notify }) {
     <div>
       <div className="card" style={{ marginBottom: 16 }}>
         <p className="cardHint">
-          Build a named set of items once (e.g. &ldquo;Monday&rdquo;, &ldquo;Valentine&rsquo;s Special&rdquo;, &ldquo;Thanksgiving Special&rdquo;),
-          then assign it to any calendar date in the Calendar tab -- on that date, only this configuration&rsquo;s items are available.
+          Select items from your catalog once to build a named master (e.g. &ldquo;Weekday Lunch&rdquo;, &ldquo;Valentine&rsquo;s Special&rdquo;, &ldquo;Thanksgiving Special&rdquo;).
+          Then on the Calendar tab, apply that master to any date in one click -- no need to pick items again.
         </p>
       </div>
-      <button className="button primary small" style={{ marginBottom: 16 }} onClick={() => setShowAdd(true)}><Plus size={14} />New configuration</button>
+      <button className="button primary small" style={{ marginBottom: 16 }} onClick={() => setShowAdd(true)}><Plus size={14} />New master</button>
 
       {configs.length === 0 ? (
-        <EmptyState title="No configurations yet" hint="Create one to build a reusable named menu you can assign to any date." />
+        <EmptyState title="No masters yet" hint="Create one to build a reusable named menu you can apply to any date in one click." />
       ) : (
         <div className="grid cols-3">
           {configs.map((cfg) => (
@@ -1440,13 +1529,15 @@ function AddConfigurationModal({ onClose, onSaved }) {
   return (
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalCard" onClick={(e) => e.stopPropagation()}>
-        <div className="modalHeader"><h3>New configuration</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        <div className="modalHeader"><h3>New master</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        <div className="modalBody">
         {error && <div className="loginError">{error}</div>}
         <form onSubmit={submit} className="formGrid one">
-          <div className="field"><label>Name</label><input className="textInput" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Thanksgiving Special" /></div>
+          <div className="field"><label>Name</label><input className="textInput" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Weekday Lunch" /></div>
           <div className="field"><label>Description</label><textarea className="textarea" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
           <button className="button primary" type="submit" disabled={saving} style={{ justifyContent: "center" }}>{saving ? "Creating..." : "Create"}</button>
         </form>
+        </div>
       </div>
     </div>
   );
@@ -1454,6 +1545,7 @@ function AddConfigurationModal({ onClose, onSaved }) {
 
 function EditConfigurationItemsModal({ config, items, onClose, onSaved }) {
   const [selected, setSelected] = useState(config.item_ids.map(String));
+  const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -1461,6 +1553,8 @@ function EditConfigurationItemsModal({ config, items, onClose, onSaved }) {
     const key = String(id);
     setSelected((prev) => (prev.includes(key) ? prev.filter((v) => v !== key) : [...prev, key]));
   }
+
+  const visible = items.filter((i) => i.name.toLowerCase().includes(search.toLowerCase()));
 
   async function submit(e) {
     e.preventDefault();
@@ -1480,10 +1574,17 @@ function EditConfigurationItemsModal({ config, items, onClose, onSaved }) {
   return (
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalCard" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
-        <div className="modalHeader"><h3>{config.name}: select items</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        <div className="modalHeader"><h3>{config.name}: master items</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        <div className="modalBody">
         {error && <div className="loginError">{error}</div>}
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <input className="textInput" placeholder="Search items..." value={search} onChange={(e) => setSearch(e.target.value)} style={{ flex: 1 }} />
+          <button type="button" className="button secondary small" onClick={() => setSelected(visible.map((i) => String(i.id)))}>Select all</button>
+          <button type="button" className="button ghost small" onClick={() => setSelected([])}>Clear</button>
+        </div>
         <div style={{ maxHeight: 360, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
-          {items.map((item) => (
+          {visible.length === 0 && <EmptyState title="No matching items" hint="Try a different search." />}
+          {visible.map((item) => (
             <label key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", border: "1px solid var(--line)", borderRadius: "var(--radius-sm)", cursor: "pointer" }}>
               <input type="checkbox" checked={selected.includes(String(item.id))} onChange={() => toggle(item.id)} />
               <span style={{ fontSize: 13.5, flex: 1 }}>{item.name}</span>
@@ -1492,21 +1593,241 @@ function EditConfigurationItemsModal({ config, items, onClose, onSaved }) {
           ))}
         </div>
         <button className="button primary" onClick={submit} disabled={saving} style={{ width: "100%", justifyContent: "center" }}>{saving ? "Saving..." : `Save (${selected.length} selected)`}</button>
+        </div>
       </div>
     </div>
   );
 }
 
 const SLOT_LABELS = { morning: "Morning", midday: "Mid-day", evening: "Evening" };
-const SLOT_MODE_BADGE = { default: "completed", configuration: "active", custom: "pending", closed: "cancelled" };
-const SLOT_MODE_LABEL = { default: "Default", configuration: "Configured", custom: "Custom", closed: "Closed" };
+
+/** Loads one date's per-slot schedule + the catalog + masters needed to edit it, and exposes
+ * actions that always auto-save immediately (add/remove/load-master/close) -- there is no
+ * separate "save" step, so staff see the effect of every click right away. Applying a master
+ * COPIES its item list into that slot's own editable list rather than linking to it live: the
+ * slot and the master are never stuck in a one-to-one relationship, and editing afterward
+ * (adding or removing a dish) never snaps back to the master's original set. */
+function useDaySchedule(date, onChanged) {
+  const [day, setDay] = useState(null);
+  const [configs, setConfigs] = useState([]);
+  const [items, setItems] = useState([]);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(() => {
+    Promise.all([
+      apiFetch(`/api/menu/day-schedule?date=${date}`),
+      apiFetch("/api/menu/configurations"),
+      apiFetch("/api/menu/items")
+    ]).then(([d, c, i]) => { setDay(d); setConfigs(c); setItems(i); }).catch((e) => setErr(e.message));
+  }, [date]);
+  useEffect(() => { load(); }, [load]);
+
+  // menu_items.id is a Postgres bigint, which node-pg always returns as a string -- normalize
+  // to Number here so every add/remove comparison below is number-to-number, never "5" !== 5.
+  function currentItemIds(slot) {
+    return (day?.resolved?.[slot]?.items || []).map((i) => Number(i.id));
+  }
+
+  async function patchSlot(slot, body) {
+    try {
+      await apiFetch("/api/menu/day-schedule", { method: "PATCH", body: JSON.stringify({ date, slot, ...body }) });
+      load();
+      if (onChanged) onChanged();
+    } catch (e) { alert(e.message); }
+  }
+
+  function addItem(slot, itemId) {
+    const ids = Array.from(new Set([...currentItemIds(slot), Number(itemId)]));
+    return patchSlot(slot, { action: "set_items", itemIds: ids, configurationId: null });
+  }
+  function removeItem(slot, itemId) {
+    const ids = currentItemIds(slot).filter((id) => id !== Number(itemId));
+    return patchSlot(slot, { action: "set_items", itemIds: ids, configurationId: null });
+  }
+  function loadMaster(slot, configId) {
+    const config = configs.find((c) => String(c.id) === String(configId));
+    if (!config) return;
+    return patchSlot(slot, { action: "set_items", itemIds: config.item_ids.map(Number), configurationId: Number(configId) });
+  }
+  // A slot with no explicit schedule resolves to "every catalog item valid for this meal
+  // period" (the fallback default) -- that is NOT the same as staff having added those items,
+  // so it must never render as a removable list. These two give an explicit, deliberate way
+  // to start customizing: blank (pick from scratch) or seeded from what the default currently is.
+  function startBlank(slot) {
+    return patchSlot(slot, { action: "set_items", itemIds: [], configurationId: null });
+  }
+  function startFromDefault(slot) {
+    return patchSlot(slot, { action: "set_items", itemIds: currentItemIds(slot), configurationId: null });
+  }
+  function toggleClosed(slot, closed) {
+    return patchSlot(slot, { action: "set_closed", closed });
+  }
+  async function toggleSoldOut(item) {
+    try {
+      await apiFetch(`/api/menu/items/${item.id}`, { method: "PATCH", body: JSON.stringify({ soldOut: !item.sold_out }) });
+      load();
+    } catch (e) { alert(e.message); }
+  }
+
+  return { day, configs, items, err, addItem, removeItem, loadMaster, startBlank, startFromDefault, toggleClosed, toggleSoldOut };
+}
+
+/** One shift's editable menu: current items as removable chips, "+ Add item" and "Load a
+ * master" pop-open pickers that save on click, and a Closed toggle. Used identically for
+ * today (inline, three stacked) and for any Calendar date (inside a modal). */
+function ShiftCard({ slot, label, timeRange, scheduleState, resolvedItems, configs, catalogItems, onToggleClosed, onLoadMaster, onAddItem, onRemoveItem, onToggleSoldOut, onStartBlank, onStartFromDefault }) {
+  const [showAddPicker, setShowAddPicker] = useState(false);
+  const [showMasterPicker, setShowMasterPicker] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const closed = scheduleState?.mode === "closed";
+  const isDefault = scheduleState?.mode === "default";
+  const badge = !scheduleState || closed
+    ? { cls: "cancelled", label: "Closed" }
+    : scheduleState.mode === "custom"
+    ? (scheduleState.configurationName ? { cls: "active", label: `From ${scheduleState.configurationName} (edited)` } : { cls: "pending", label: "Custom items" })
+    : scheduleState.mode === "configuration"
+    ? { cls: "active", label: `Master: ${scheduleState.configurationName}` }
+    : { cls: "completed", label: "Not chosen yet" };
+
+  const existingIds = new Set(resolvedItems.map((i) => i.id));
+  const addable = catalogItems.filter((i) => !existingIds.has(i.id) && i.name.toLowerCase().includes(search.toLowerCase()));
+
+  const masterPicker = showMasterPicker && (
+    <div style={{ marginTop: 10, border: "1px solid var(--line)", borderRadius: "var(--radius-sm)", padding: 10 }}>
+      {configs.length === 0 ? (
+        <span className="cardHint">No masters yet -- build one in the Masters tab.</span>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {configs.map((c) => (
+            <button type="button" key={c.id} className="button ghost small" style={{ justifyContent: "space-between" }}
+              onClick={() => { onLoadMaster(slot, c.id); setShowMasterPicker(false); }}>
+              <span>{c.name}</span><span className="cardHint">{c.item_ids.length} item{c.item_ids.length === 1 ? "" : "s"}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <p className="cardHint" style={{ marginTop: 6 }}>Replaces this shift&rsquo;s current items with the master&rsquo;s list -- you can still add or remove items afterward, and it won&rsquo;t snap back.</p>
+    </div>
+  );
+
+  return (
+    <div className="card" style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div><strong style={{ fontSize: 14 }}>{label}</strong> {timeRange && <span className="cardHint">({timeRange})</span>}</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span className={`badge ${badge.cls}`}>{badge.label}</span>
+          <button className={`button small ${closed ? "danger" : "secondary"}`} onClick={() => onToggleClosed(slot, !closed)}>{closed ? "Reopen" : "Close shift"}</button>
+        </div>
+      </div>
+
+      {!closed && isDefault && (
+        // Nothing has been explicitly chosen for this shift yet -- resolvedItems here is just
+        // every catalog item that could apply by default, NOT something staff added, so it's
+        // never shown as a removable list. Staff must explicitly choose how to start.
+        <div style={{ marginTop: 12 }}>
+          <p className="cardHint" style={{ marginBottom: 10 }}>
+            Nothing chosen yet -- {resolvedItems.length} item{resolvedItems.length === 1 ? "" : "s"} would be available by default. Pick how to start this shift&rsquo;s menu:
+          </p>
+          <div className="pillRow">
+            <button type="button" className="button secondary small" onClick={() => onStartBlank(slot)}><Plus size={13} />Select items</button>
+            <button type="button" className="button ghost small" onClick={() => onStartFromDefault(slot)}>Edit the default list</button>
+            <button type="button" className="button ghost small" onClick={() => setShowMasterPicker((v) => !v)}><Layers size={13} />Load a master</button>
+          </div>
+          {masterPicker}
+        </div>
+      )}
+
+      {!closed && !isDefault && (
+        <>
+          <div className="shiftItemsGrid" style={{ marginTop: 12 }}>
+            {resolvedItems.length === 0 && <span className="cardHint">No items yet -- add some below or load a master.</span>}
+            {resolvedItems.map((item) => (
+              <div key={item.id} className="shiftItemCard" style={{ opacity: item.sold_out ? 0.6 : 1 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <strong style={{ fontSize: 13.5 }}>{item.name}</strong>
+                  <strong style={{ fontSize: 13, flexShrink: 0 }}>${(item.price_cents / 100).toFixed(2)}</strong>
+                </div>
+                {item.description && <p className="cardHint" style={{ margin: "6px 0 0", lineHeight: 1.45 }}>{item.description}</p>}
+                {(item.dietary_tags?.length > 0 || item.complimentary) && (
+                  <div className="pillRow" style={{ marginTop: 8 }}>
+                    {item.dietary_tags?.map((t) => <span key={t} className="pill">{t}</span>)}
+                    {item.complimentary && <span className="pill">complimentary</span>}
+                  </div>
+                )}
+                {item.sold_out && <div className="cardHint" style={{ color: "var(--danger)", marginTop: 8 }}>Out of stock</div>}
+                <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+                  <button type="button" className={`button small ${item.sold_out ? "secondary" : "danger"}`} onClick={() => onToggleSoldOut(item)}>
+                    {item.sold_out ? "Back in stock" : "Out of stock"}
+                  </button>
+                  <button type="button" className="button ghost small" title="Remove from this shift" onClick={() => onRemoveItem(slot, item.id)}><X size={13} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="pillRow" style={{ marginTop: 12 }}>
+            <button type="button" className="button secondary small" onClick={() => { setShowAddPicker((v) => !v); setShowMasterPicker(false); }}><Plus size={13} />Add item</button>
+            <button type="button" className="button ghost small" onClick={() => { setShowMasterPicker((v) => !v); setShowAddPicker(false); }}><Layers size={13} />Load a master</button>
+          </div>
+
+          {showAddPicker && (
+            <div style={{ marginTop: 10, border: "1px solid var(--line)", borderRadius: "var(--radius-sm)", padding: 10 }}>
+              <input className="textInput" placeholder="Search items to add..." value={search} onChange={(e) => setSearch(e.target.value)} style={{ marginBottom: 8 }} />
+              <div style={{ maxHeight: 180, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+                {addable.length === 0 && <span className="cardHint">No matching items.</span>}
+                {addable.map((item) => (
+                  <button type="button" key={item.id} className="button ghost small" style={{ justifyContent: "space-between" }}
+                    onClick={() => { onAddItem(slot, item.id); setSearch(""); }}>
+                    <span>{item.name}</span><span className="cardHint">${(item.price_cents / 100).toFixed(2)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {masterPicker}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Today's menu, grouped into its three shifts -- the fast path for "what's on right now",
+ * with the same add/remove/close/load-a-master actions as the Calendar, just inline instead
+ * of behind a modal. */
+function TodaysItemsPanel() {
+  const today = new Date().toISOString().slice(0, 10);
+  const [slots, setSlots] = useState([]);
+  const { day, configs, items, err, addItem, removeItem, loadMaster, startBlank, startFromDefault, toggleClosed, toggleSoldOut } = useDaySchedule(today);
+
+  useEffect(() => { apiFetch("/api/menu/daily-slots").then(setSlots).catch(() => {}); }, []);
+
+  if (err) return <ErrorBlock message={err} />;
+  if (!day) return <LoadingBlock />;
+
+  const slotTimes = Object.fromEntries(slots.map((s) => [s.slot, `${s.start_time?.slice(0, 5)}-${s.end_time?.slice(0, 5)}`]));
+
+  return (
+    <div>
+      <div className="cardHint" style={{ marginBottom: 14 }}>
+        {new Date(`${today}T00:00:00Z`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })} &middot; changes here only affect today -- use the Calendar tab for other dates.
+      </div>
+      {["morning", "midday", "evening"].map((slot) => (
+        <ShiftCard key={slot} slot={slot} label={SLOT_LABELS[slot]} timeRange={slotTimes[slot] || ""}
+          scheduleState={day.schedule[slot]} resolvedItems={day.resolved[slot]?.items || []}
+          configs={configs} catalogItems={items}
+          onToggleClosed={toggleClosed} onLoadMaster={loadMaster} onAddItem={addItem} onRemoveItem={removeItem} onToggleSoldOut={toggleSoldOut}
+          onStartBlank={startBlank} onStartFromDefault={startFromDefault}
+        />
+      ))}
+    </div>
+  );
+}
 
 function MenuCalendarPanel({ notify }) {
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [schedule, setSchedule] = useState(null);
-  const [configs, setConfigs] = useState([]);
-  const [items, setItems] = useState([]);
-  const [slots, setSlots] = useState([]);
   const [selectedDate, setSelectedDate] = useState(null);
   const todayIso = new Date().toISOString().slice(0, 10);
 
@@ -1515,9 +1836,6 @@ function MenuCalendarPanel({ notify }) {
 
   const load = useCallback(() => {
     apiFetch(`/api/menu/schedule?from=${from}&to=${to}`).then(setSchedule).catch(() => setSchedule([]));
-    apiFetch("/api/menu/configurations").then(setConfigs).catch(() => {});
-    apiFetch("/api/menu/items").then(setItems).catch(() => {});
-    apiFetch("/api/menu/daily-slots").then(setSlots).catch(() => {});
   }, [from, to]);
   useEffect(() => { load(); }, [load]);
 
@@ -1545,29 +1863,40 @@ function MenuCalendarPanel({ notify }) {
           {cells.map((day, i) => {
             if (!day) return <div key={`blank-${i}`} />;
             const iso = `${month}-${String(day).padStart(2, "0")}`;
-            const scheduled = scheduleByDate.get(iso);
-            const isPast = iso < todayIso;
+            const entry = scheduleByDate.get(iso);
+            const classes = ["calDay"];
+            if (entry?.has_special) classes.push("special");
+            else if (entry?.has_closed) classes.push("closed");
+            else if (entry?.configured_slots > 0) classes.push("scheduled");
+            if (iso === todayIso) classes.push("today");
+            if (iso < todayIso) classes.push("past");
+            const title = entry?.headline_configuration
+              ? `${entry.headline_configuration}${entry.has_special ? " (special day)" : ""}`
+              : "No menu set up yet";
             return (
-              <button key={iso} onClick={() => setSelectedDate(iso)}
-                style={{
-                  aspectRatio: "1", borderRadius: 8, border: `1px solid ${scheduled ? "var(--brand)" : "var(--line)"}`,
-                  background: scheduled ? "var(--brand-soft)" : "#fff", cursor: "pointer", padding: 2, opacity: isPast ? 0.45 : 1,
-                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontSize: 11.5, fontWeight: 600
-                }}>
+              <button key={iso} className={classes.join(" ")} title={title} onClick={() => setSelectedDate(iso)}>
+                {entry?.has_special && <span className="calDayMark" aria-label="Special day">S</span>}
+                {!entry?.has_special && entry?.has_closed && <span className="calDayMark">C</span>}
                 {day}
               </button>
             );
           })}
         </div>
+
+        <div className="calLegend">
+          <span className="calLegendItem"><span className="calLegendSwatch" style={{ background: "var(--brand-soft)", borderColor: "var(--brand)" }} />Menu set</span>
+          <span className="calLegendItem"><span className="calLegendSwatch" style={{ background: "var(--amber-soft)", borderColor: "#c98a16" }} />S &middot; Special day</span>
+          <span className="calLegendItem"><span className="calLegendSwatch" style={{ background: "var(--danger-soft)", borderColor: "var(--danger)" }} />C &middot; Shift closed</span>
+        </div>
       </div>
 
-      <div className="cardHint">Click any date to configure Morning / Mid-day / Evening separately -- each slot can have its own menu or be closed.</div>
+      <div className="cardHint">Click any date to see and edit Morning / Mid-day / Evening separately -- load a master in one click, add or remove dishes by hand, or close the shift.</div>
 
       {selectedDate && (
         <DayScheduleModal
-          date={selectedDate} slots={slots} configs={configs} items={items} isPast={selectedDate < todayIso}
+          date={selectedDate} isPast={selectedDate < todayIso}
           onClose={() => setSelectedDate(null)}
-          onChanged={() => { load(); notify("Schedule updated"); }}
+          onChanged={load}
         />
       )}
     </div>
@@ -1580,121 +1909,36 @@ function addMonths(yyyyMm, delta) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-function DayScheduleModal({ date, slots, configs, items, isPast, onClose, onChanged }) {
-  const [day, setDay] = useState(null);
-  const [activeSlot, setActiveSlot] = useState("morning");
-  const [draftItemIds, setDraftItemIds] = useState([]);
-  const [configId, setConfigId] = useState("");
-  const [saving, setSaving] = useState(false);
+function DayScheduleModal({ date, isPast, onClose, onChanged }) {
+  const [slots, setSlots] = useState([]);
+  const { day, configs, items, err, addItem, removeItem, loadMaster, startBlank, startFromDefault, toggleClosed, toggleSoldOut } = useDaySchedule(date, onChanged);
 
-  const load = useCallback(() => {
-    apiFetch(`/api/menu/day-schedule?date=${date}`).then((data) => {
-      setDay(data);
-      const resolved = data.resolved[activeSlot];
-      setDraftItemIds((resolved.items || []).map((i) => i.id));
-      setConfigId(data.schedule[activeSlot].configurationId || "");
-    }).catch(() => {});
-  }, [date, activeSlot]);
-  useEffect(() => { load(); }, [load]);
-
-  function toggleItem(id) {
-    setDraftItemIds((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
-  }
-
-  async function loadFromConfiguration(id) {
-    setConfigId(id);
-    const config = configs.find((c) => String(c.id) === String(id));
-    if (config) setDraftItemIds(config.item_ids.map(Number));
-  }
-
-  async function saveConfiguration() {
-    if (!configId) return;
-    setSaving(true);
-    try {
-      await apiFetch("/api/menu/day-schedule", { method: "PATCH", body: JSON.stringify({ date, slot: activeSlot, action: "assign_configuration", configurationId: Number(configId) }) });
-      onChanged();
-      load();
-    } catch (e) { alert(e.message); } finally { setSaving(false); }
-  }
-
-  async function saveCustomItems() {
-    setSaving(true);
-    try {
-      await apiFetch("/api/menu/day-schedule", { method: "PATCH", body: JSON.stringify({ date, slot: activeSlot, action: "set_items", itemIds: draftItemIds, configurationId: configId ? Number(configId) : null }) });
-      onChanged();
-      load();
-    } catch (e) { alert(e.message); } finally { setSaving(false); }
-  }
-
-  async function toggleClosed(closed) {
-    setSaving(true);
-    try {
-      await apiFetch("/api/menu/day-schedule", { method: "PATCH", body: JSON.stringify({ date, slot: activeSlot, action: "set_closed", closed }) });
-      onChanged();
-      load();
-    } catch (e) { alert(e.message); } finally { setSaving(false); }
-  }
+  useEffect(() => { apiFetch("/api/menu/daily-slots").then(setSlots).catch(() => {}); }, []);
 
   const slotTimes = Object.fromEntries(slots.map((s) => [s.slot, `${s.start_time?.slice(0, 5)}-${s.end_time?.slice(0, 5)}`]));
-  const slotState = day?.schedule[activeSlot];
-  const closed = slotState?.mode === "closed";
 
   return (
     <div className="modalOverlay" onClick={onClose}>
-      <div className="modalCard" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 600 }}>
+      <div className="modalCard" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
         <div className="modalHeader">
           <h3>{new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</h3>
           <button className="button ghost small" onClick={onClose}><X size={14} /></button>
         </div>
+        <div className="modalBody">
 
         {isPast ? (
           <div className="cardHint" style={{ background: "var(--line-soft)", padding: 10, borderRadius: 10 }}>This date is in the past and cannot be edited.</div>
-        ) : !day ? <LoadingBlock /> : (
-          <>
-            <div className="tabRow">
-              {["morning", "midday", "evening"].map((slot) => (
-                <button key={slot} className={`tabChip ${activeSlot === slot ? "active" : ""}`} onClick={() => setActiveSlot(slot)}>
-                  {SLOT_LABELS[slot]} <span className="cardHint">({slotTimes[slot]})</span>
-                </button>
-              ))}
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <span className={`badge ${SLOT_MODE_BADGE[slotState?.mode]}`}>{SLOT_MODE_LABEL[slotState?.mode]}</span>
-              <button className={`button small ${closed ? "danger" : "secondary"}`} onClick={() => toggleClosed(!closed)} disabled={saving}>
-                {closed ? "Reopen this slot" : "Mark slot closed"}
-              </button>
-            </div>
-
-            {!closed && (
-              <>
-                <div className="field" style={{ marginBottom: 12 }}>
-                  <label>Quick-fill from a configuration</label>
-                  <select className="select" value={configId} onChange={(e) => loadFromConfiguration(e.target.value)}>
-                    <option value="">Pick items manually...</option>
-                    {configs.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
-
-                <div style={{ maxHeight: 280, overflowY: "auto", display: "flex", flexDirection: "column", gap: 5, marginBottom: 14, border: "1px solid var(--line)", borderRadius: "var(--radius-sm)", padding: 8 }}>
-                  {items.map((item) => (
-                    <label key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", fontSize: 13 }}>
-                      <input type="checkbox" checked={draftItemIds.includes(item.id)} onChange={() => toggleItem(item.id)} />
-                      <span style={{ flex: 1 }}>{item.name}</span>
-                      <span className="cardHint">${(item.price_cents / 100).toFixed(2)}</span>
-                    </label>
-                  ))}
-                </div>
-
-                <div style={{ display: "flex", gap: 8 }}>
-                  {configId && <button className="button secondary small" onClick={saveConfiguration} disabled={saving}>Use configuration as-is</button>}
-                  <button className="button primary small" onClick={saveCustomItems} disabled={saving}>{saving ? "Saving..." : `Save ${draftItemIds.length} item${draftItemIds.length === 1 ? "" : "s"} for ${SLOT_LABELS[activeSlot]}`}</button>
-                </div>
-              </>
-            )}
-          </>
+        ) : err ? <ErrorBlock message={err} /> : !day ? <LoadingBlock /> : (
+          ["morning", "midday", "evening"].map((slot) => (
+            <ShiftCard key={slot} slot={slot} label={SLOT_LABELS[slot]} timeRange={slotTimes[slot] || ""}
+              scheduleState={day.schedule[slot]} resolvedItems={day.resolved[slot]?.items || []}
+              configs={configs} catalogItems={items}
+              onToggleClosed={toggleClosed} onLoadMaster={loadMaster} onAddItem={addItem} onRemoveItem={removeItem} onToggleSoldOut={toggleSoldOut}
+              onStartBlank={startBlank} onStartFromDefault={startFromDefault}
+            />
+          ))
         )}
-
+        </div>
       </div>
     </div>
   );
@@ -1718,8 +1962,14 @@ function TagPicker({ options, selected, onToggle }) {
   );
 }
 
-function AddMenuItemModal({ categories, onClose, onSaved }) {
-  const [form, setForm] = useState({
+function AddMenuItemModal({ categories, editingItem, onClose, onSaved }) {
+  const [form, setForm] = useState(() => editingItem ? {
+    name: editingItem.name || "", description: editingItem.description || "",
+    priceDollars: editingItem.price_cents != null ? (editingItem.price_cents / 100).toFixed(2) : "",
+    categoryId: editingItem.category_id || categories[0]?.id || "",
+    dietaryTags: editingItem.dietary_tags || [], recommendTags: editingItem.recommend_tags || [],
+    mealPeriods: editingItem.meal_periods || ["midday", "evening"], complimentary: editingItem.complimentary || false
+  } : {
     name: "", description: "", priceDollars: "", categoryId: categories[0]?.id || "",
     dietaryTags: [], recommendTags: [], mealPeriods: ["midday", "evening"], complimentary: false
   });
@@ -1734,20 +1984,22 @@ function AddMenuItemModal({ categories, onClose, onSaved }) {
     e.preventDefault();
     setSaving(true);
     setError("");
+    const payload = {
+      name: form.name,
+      description: form.description,
+      categoryId: form.categoryId ? Number(form.categoryId) : null,
+      priceCents: Math.round(Number(form.priceDollars || 0) * 100),
+      dietaryTags: form.dietaryTags,
+      recommendTags: form.recommendTags,
+      mealPeriods: form.mealPeriods,
+      complimentary: form.complimentary
+    };
     try {
-      await apiFetch("/api/menu/items", {
-        method: "POST",
-        body: JSON.stringify({
-          name: form.name,
-          description: form.description,
-          categoryId: form.categoryId ? Number(form.categoryId) : null,
-          priceCents: Math.round(Number(form.priceDollars || 0) * 100),
-          dietaryTags: form.dietaryTags,
-          recommendTags: form.recommendTags,
-          mealPeriods: form.mealPeriods,
-          complimentary: form.complimentary
-        })
-      });
+      if (editingItem) {
+        await apiFetch(`/api/menu/items/${editingItem.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+      } else {
+        await apiFetch("/api/menu/items", { method: "POST", body: JSON.stringify(payload) });
+      }
       onSaved();
     } catch (err) {
       setError(err.message);
@@ -1757,7 +2009,8 @@ function AddMenuItemModal({ categories, onClose, onSaved }) {
   return (
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalCard" onClick={(e) => e.stopPropagation()}>
-        <div className="modalHeader"><h3>Add menu item</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        <div className="modalHeader"><h3>{editingItem ? "Edit menu item" : "Add menu item"}</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        <div className="modalBody">
         {error && <div className="loginError">{error}</div>}
         <form onSubmit={submit} className="formGrid">
           <div className="field"><label>Name</label><input className="textInput" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
@@ -1791,8 +2044,9 @@ function AddMenuItemModal({ categories, onClose, onSaved }) {
             <label>Recommendation tags</label>
             <TagPicker options={RECOMMEND_TAG_OPTIONS} selected={form.recommendTags} onToggle={(t) => toggle("recommendTags", t)} />
           </div>
-          <button className="button primary" type="submit" disabled={saving} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Saving..." : "Save item"}</button>
+          <button className="button primary" type="submit" disabled={saving} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Saving..." : editingItem ? "Save changes" : "Save item"}</button>
         </form>
+        </div>
       </div>
     </div>
   );
@@ -1932,21 +2186,59 @@ function AddExtraInfoModal({ onClose, onSaved }) {
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalCard" onClick={(e) => e.stopPropagation()}>
         <div className="modalHeader"><h3>Add extra info</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        <div className="modalBody">
         {error && <div className="loginError">{error}</div>}
         <form onSubmit={submit} className="formGrid one">
           <div className="field"><label>Topic / name</label><input className="textInput" required value={form.topic} onChange={(e) => setForm({ ...form, topic: e.target.value })} placeholder="e.g. Birthday policy" /></div>
           <div className="field"><label>Detail (what the agent should say)</label><textarea className="textarea" rows={4} required value={form.detail} onChange={(e) => setForm({ ...form, detail: e.target.value })} placeholder="e.g. We bring out a complimentary dessert for birthdays -- just mention it when booking." /></div>
           <button className="button primary" type="submit" disabled={saving} style={{ justifyContent: "center" }}>{saving ? "Saving..." : "Save"}</button>
         </form>
+        </div>
       </div>
     </div>
   );
 }
 
+const WEEKDAY_LABELS = [["mon", "Monday"], ["tue", "Tuesday"], ["wed", "Wednesday"], ["thu", "Thursday"], ["fri", "Friday"], ["sat", "Saturday"], ["sun", "Sunday"]];
+
+// Normalizes a day's stored shape (old single {open,close,closed}, or already {closed,windows})
+// into { closed, windows: [{open,close}, ...] } so the editor always has a list to render,
+// even for restaurants whose hours were saved before multi-window support.
+function normalizeDayHours(day) {
+  if (!day) return { closed: false, windows: [{ open: "11:00", close: "22:00" }] };
+  if (Array.isArray(day.windows)) return { closed: !!day.closed, windows: day.windows.length ? day.windows : [{ open: "11:00", close: "22:00" }] };
+  if (day.open && day.close) return { closed: !!day.closed, windows: [{ open: day.open, close: day.close }] };
+  return { closed: !!day.closed, windows: [{ open: "11:00", close: "22:00" }] };
+}
+
 function ProfileForm({ settings, onSave }) {
   const [form, setForm] = useState({ address: settings.address || "", phone: settings.phone || "", total_seating_capacity: settings.total_seating_capacity || 0, description: settings.description || "" });
-  const [hours, setHours] = useState(settings.opening_hours || {});
-  const days = [["mon", "Monday"], ["tue", "Tuesday"], ["wed", "Wednesday"], ["thu", "Thursday"], ["fri", "Friday"], ["sat", "Saturday"], ["sun", "Sunday"]];
+  const [hours, setHours] = useState(() => {
+    const normalized = {};
+    for (const [key] of WEEKDAY_LABELS) normalized[key] = normalizeDayHours((settings.opening_hours || {})[key]);
+    return normalized;
+  });
+
+  function setDay(key, patch) {
+    setHours((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
+  }
+  function setWindow(key, idx, patch) {
+    setHours((prev) => ({ ...prev, [key]: { ...prev[key], windows: prev[key].windows.map((w, i) => (i === idx ? { ...w, ...patch } : w)) } }));
+  }
+  function addWindow(key) {
+    setHours((prev) => ({ ...prev, [key]: { ...prev[key], windows: [...prev[key].windows, { open: "17:00", close: "22:00" }] } }));
+  }
+  function removeWindow(key, idx) {
+    setHours((prev) => ({ ...prev, [key]: { ...prev[key], windows: prev[key].windows.filter((_, i) => i !== idx) } }));
+  }
+  function copyToAllDays(key) {
+    const source = hours[key];
+    setHours((prev) => {
+      const next = { ...prev };
+      for (const [k] of WEEKDAY_LABELS) next[k] = { closed: source.closed, windows: source.windows.map((w) => ({ ...w })) };
+      return next;
+    });
+  }
 
   return (
     <div className="card">
@@ -1957,17 +2249,40 @@ function ProfileForm({ settings, onSave }) {
         <div className="field" style={{ gridColumn: "1 / -1" }}><label>Description</label><textarea className="textarea" rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
       </div>
 
-      <div className="cardTitle" style={{ marginBottom: 10 }}>Opening hours</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
-        {days.map(([key, label]) => {
-          const day = hours[key] || { open: "11:00", close: "22:00", closed: false };
+      <div className="cardTitle" style={{ marginBottom: 4 }}>Opening hours</div>
+      <p className="cardHint" style={{ marginBottom: 14 }}>Add more than one window on a day (e.g. lunch 11:00-14:00, then closed, then dinner 17:00-22:00) for a midday break between services.</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+        {WEEKDAY_LABELS.map(([key, label]) => {
+          const day = hours[key];
           return (
-            <div key={key} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ width: 90, fontSize: 13 }}>{label}</span>
-              <input type="checkbox" checked={!day.closed} onChange={(e) => setHours({ ...hours, [key]: { ...day, closed: !e.target.checked } })} />
-              <input className="textInput" type="time" disabled={day.closed} value={day.open} onChange={(e) => setHours({ ...hours, [key]: { ...day, open: e.target.value } })} style={{ width: 120 }} />
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>to</span>
-              <input className="textInput" type="time" disabled={day.closed} value={day.close} onChange={(e) => setHours({ ...hours, [key]: { ...day, close: e.target.value } })} style={{ width: 120 }} />
+            <div key={key} style={{ border: "1px solid var(--line)", borderRadius: "var(--radius-sm)", padding: "10px 12px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <span style={{ width: 90, fontSize: 13, fontWeight: 700 }}>{label}</span>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--muted)" }}>
+                  <input type="checkbox" checked={!day.closed} onChange={(e) => setDay(key, { closed: !e.target.checked })} />Open
+                </label>
+                {!day.closed && (
+                  <button type="button" className="button ghost small" onClick={() => copyToAllDays(key)} title="Copy this day's hours to every other day">Copy to all days</button>
+                )}
+              </div>
+
+              {!day.closed && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+                  {day.windows.map((w, idx) => (
+                    <div key={idx} style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 90 }}>
+                      <input className="textInput" type="time" value={w.open} onChange={(e) => setWindow(key, idx, { open: e.target.value })} style={{ width: 120 }} />
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>to</span>
+                      <input className="textInput" type="time" value={w.close} onChange={(e) => setWindow(key, idx, { close: e.target.value })} style={{ width: 120 }} />
+                      {day.windows.length > 1 && (
+                        <button type="button" className="button ghost small" title="Remove this window" onClick={() => removeWindow(key, idx)}><X size={13} /></button>
+                      )}
+                    </div>
+                  ))}
+                  <button type="button" className="button secondary small" style={{ marginLeft: 90, alignSelf: "flex-start" }} onClick={() => addWindow(key)}>
+                    <Plus size={13} />Add another window
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -2248,6 +2563,9 @@ function TakeAwayView({ notify }) {
                 <span className={`badge ${order.status}`}>{TAKEAWAY_STATUS_LABELS[order.status]}</span>
               </div>
               <div className="cardHint">{order.customer_name} &middot; {order.phone}</div>
+              {order.requested_time && (
+                <div className="cardHint" style={{ marginTop: 3 }}><Clock size={12} style={{ verticalAlign: "-2px" }} /> Pickup at {formatTime12h(String(order.requested_time).slice(0, 5))}</div>
+              )}
               <div className="pillRow" style={{ margin: "10px 0" }}>
                 {order.items.map((item, i) => <span key={i} className="pill">{item.quantity}&times; {item.name}</span>)}
               </div>
@@ -2279,20 +2597,63 @@ function TakeAwayView({ notify }) {
 }
 
 function NewTakeawayModal({ onClose, onSaved }) {
-  const [items, setItems] = useState([]);
+  const today = new Date().toISOString().slice(0, 10);
+  const [slot, setSlot] = useState("");             // chosen shift -- drives both menu and times
+  const [day, setDay] = useState(null);             // today's per-shift menu (what's actually on)
+  const [slotWindows, setSlotWindows] = useState([]); // daily_slots start/end per shift
   const [lines, setLines] = useState([]); // { menuItemId, quantity, variantLabel? }
   const [pendingItemId, setPendingItemId] = useState("");
   const [pendingVariant, setPendingVariant] = useState("");
-  const [form, setForm] = useState({ customerName: "", phone: "", requestedSlot: "midday", notes: "" });
+  const [form, setForm] = useState({ customerName: "", phone: "", requestedTime: "", notes: "" });
+  const [pickup, setPickup] = useState(null); // { options, intervalMinutes, prepBufferMinutes }
   const [stage, setStage] = useState("build"); // build -> review -> (create)
   const [quote, setQuote] = useState(null);
   const [quoting, setQuoting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => { apiFetch("/api/menu/items").then(setItems).catch(() => {}); }, []);
+  useEffect(() => {
+    apiFetch(`/api/menu/day-schedule?date=${today}`).then(setDay).catch(() => {});
+    apiFetch("/api/menu/daily-slots").then(setSlotWindows).catch(() => {});
+    apiFetch("/api/takeaway/pickup-options").then(setPickup).catch(() => {});
+  }, [today]);
 
-  const pendingItem = items.find((i) => i.id === Number(pendingItemId));
+  // Items are whatever today's menu actually has on for the chosen shift -- never the whole
+  // catalog, so staff can't take an order for something that isn't being served that shift.
+  const items = slot && day ? (day.resolved?.[slot]?.items || []) : [];
+  const slotWindowBySlot = Object.fromEntries(slotWindows.map((s) => [s.slot, s]));
+
+  // Pickup times = the valid takeaway slots (already prep-buffered and inside opening hours)
+  // narrowed to one shift's own serving window. Computed per shift, not just the selected
+  // one, so the picker can grey out shifts that have already run out of time today.
+  function timesForShift(slotKey) {
+    if (!pickup || !slotKey) return [];
+    const window = slotWindowBySlot[slotKey];
+    if (!window) return pickup.options;
+    const toMin = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+    const start = toMin(window.start_time.slice(0, 5));
+    const end = toMin(window.end_time.slice(0, 5));
+    return pickup.options.filter((t) => toMin(t) >= start && toMin(t) <= end);
+  }
+  const timesForSlot = timesForShift(slot);
+
+  function pickShift(nextSlot) {
+    setSlot(nextSlot);
+    setPendingItemId(""); setPendingVariant("");
+    // Keep any lines whose item is also on the new shift's menu; drop the ones that aren't.
+    const allowed = new Set((day?.resolved?.[nextSlot]?.items || []).map((i) => Number(i.id)));
+    setLines((prev) => prev.filter((l) => allowed.has(Number(l.menuItemId))));
+    setForm((f) => ({ ...f, requestedTime: "" }));
+  }
+
+  // Default the pickup time to the first valid one once a shift is chosen.
+  useEffect(() => {
+    if (slot && timesForSlot.length > 0 && !timesForSlot.includes(form.requestedTime)) {
+      setForm((f) => ({ ...f, requestedTime: timesForSlot[0] }));
+    }
+  }, [slot, timesForSlot, form.requestedTime]);
+
+  const pendingItem = items.find((i) => Number(i.id) === Number(pendingItemId));
 
   function lineKey(line) { return `${line.menuItemId}:${line.variantLabel || ""}`; }
 
@@ -2330,7 +2691,7 @@ function NewTakeawayModal({ onClose, onSaved }) {
     setSaving(true);
     setError("");
     try {
-      const result = await apiFetch("/api/takeaway", { method: "POST", body: JSON.stringify({ ...form, lines }) });
+      const result = await apiFetch("/api/takeaway", { method: "POST", body: JSON.stringify({ ...form, requestedSlot: slot, lines }) });
       onSaved(result.order);
     } catch (err) {
       setError(err.message);
@@ -2339,7 +2700,8 @@ function NewTakeawayModal({ onClose, onSaved }) {
   }
 
   function lineUnitPriceCents(line) {
-    const item = items.find((i) => i.id === line.menuItemId);
+    // menu_items.id is a bigint, which node-pg hands back as a string -- compare as numbers.
+    const item = items.find((i) => Number(i.id) === Number(line.menuItemId));
     if (!item) return 0;
     if (line.variantLabel) {
       const variant = (item.size_options || []).find((o) => o.label === line.variantLabel);
@@ -2358,6 +2720,7 @@ function NewTakeawayModal({ onClose, onSaved }) {
       <div className="modalOverlay" onClick={onClose}>
         <div className="modalCard" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
           <div className="modalHeader"><h3>Confirm takeaway order</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+          <div className="modalBody">
           {error && <div className="loginError">{error}</div>}
           <p className="cardHint" style={{ marginBottom: 14 }}>Priced from the live menu. Creating an order always needs this explicit confirmation.</p>
 
@@ -2387,7 +2750,7 @@ function NewTakeawayModal({ onClose, onSaved }) {
             <div style={{ fontSize: 13.5 }}>
               <div><strong>{form.customerName}</strong> &middot; {form.phone}</div>
               <div className="cardHint" style={{ marginTop: 3 }}>
-                {SLOT_OPTIONS.find(([k]) => k === form.requestedSlot)?.[1] || form.requestedSlot} &middot; pay at pickup
+                {slot ? `${SLOT_LABELS[slot]} shift · ` : ""}pickup at {formatTime12h(form.requestedTime)} today &middot; pay at pickup
               </div>
               {form.notes && <div className="cardHint" style={{ marginTop: 3 }}>Notes: {form.notes}</div>}
             </div>
@@ -2398,6 +2761,7 @@ function NewTakeawayModal({ onClose, onSaved }) {
               {saving ? "Creating..." : "Confirm & create order"}
             </button>
           </div>
+          </div>
         </div>
       </div>
     );
@@ -2407,43 +2771,84 @@ function NewTakeawayModal({ onClose, onSaved }) {
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalCard" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
         <div className="modalHeader"><h3>New takeaway order</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        <div className="modalBody">
         {error && <div className="loginError">{error}</div>}
 
         <div className="modalSection">
-          <div className="modalSectionTitle">1. Add items</div>
-          <div className="formGrid">
-            <div className="field" style={{ gridColumn: pendingItem?.size_options?.length > 0 ? "auto" : "1 / -1" }}>
-              <label>Menu item</label>
-              <select className="select" value={pendingItemId} onChange={(e) => { setPendingItemId(e.target.value); setPendingVariant(""); }}>
-                <option value="">Select a menu item...</option>
-                {available.map((i) => <option key={i.id} value={i.id}>{i.name} -- ${(i.price_cents / 100).toFixed(2)}</option>)}
-              </select>
-            </div>
-            {pendingItem?.size_options?.length > 0 && (
-              <div className="field"><label>Size</label>
-                <select className="select" value={pendingVariant} onChange={(e) => setPendingVariant(e.target.value)}>
-                  <option value="">Regular -- ${(pendingItem.price_cents / 100).toFixed(2)}</option>
-                  {pendingItem.size_options.map((o) => <option key={o.label} value={o.label}>{o.label} -- ${(o.price_cents / 100).toFixed(2)}</option>)}
-                </select>
+          <div className="modalSectionTitle">1. Pickup shift</div>
+          {!day ? <p className="cardHint">Loading today&rsquo;s menu...</p> : (
+            <>
+              <div className="pillRow">
+                {["morning", "midday", "evening"].map((s) => {
+                  const closed = day.schedule?.[s]?.mode === "closed";
+                  const window = slotWindowBySlot[s];
+                  // Once the last pickup slot in a shift's window is behind the prep buffer,
+                  // that shift is over for today -- grey it out rather than letting staff
+                  // select it and hit an empty time dropdown.
+                  const passed = !closed && !!pickup && timesForShift(s).length === 0;
+                  const disabled = closed || passed;
+                  return (
+                    <button type="button" key={s} disabled={disabled}
+                      title={closed ? "This shift is closed today" : passed ? "No pickup times left in this shift today" : ""}
+                      className={`button small ${slot === s ? "primary" : "secondary"}`}
+                      onClick={() => pickShift(s)}>
+                      {SLOT_ICONS[s]} {SLOT_LABELS[s]}
+                      {window && <span style={{ opacity: 0.7, marginLeft: 4 }}>{window.start_time.slice(0, 5)}-{window.end_time.slice(0, 5)}</span>}
+                      {closed ? " (closed)" : passed ? " (passed)" : ""}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="cardHint" style={{ marginTop: 8 }}>
+                Pickup is today only. The shift decides both what&rsquo;s on the menu and which pickup times are offered.
+                {pickup && ["morning", "midday", "evening"].every((s) => day.schedule?.[s]?.mode === "closed" || timesForShift(s).length === 0)
+                  && " No shifts are still open for pickup today."}
+              </p>
+            </>
+          )}
+        </div>
+
+        {slot && (
+          <div className="modalSection">
+            <div className="modalSectionTitle">2. Add items <span className="cardHint">(on the {SLOT_LABELS[slot].toLowerCase()} menu today)</span></div>
+            {available.length === 0 ? (
+              <p className="cardHint" style={{ padding: "10px 0" }}>Nothing is on the menu for this shift today -- set it up in Menu &rsaquo; Today&rsquo;s Items.</p>
+            ) : (
+              <div className="formGrid">
+                <div className="field" style={{ gridColumn: pendingItem?.size_options?.length > 0 ? "auto" : "1 / -1" }}>
+                  <label>Menu item</label>
+                  <select className="select" value={pendingItemId} onChange={(e) => { setPendingItemId(e.target.value); setPendingVariant(""); }}>
+                    <option value="">Select a menu item...</option>
+                    {available.map((i) => <option key={i.id} value={i.id}>{i.name} -- ${(i.price_cents / 100).toFixed(2)}</option>)}
+                  </select>
+                </div>
+                {pendingItem?.size_options?.length > 0 && (
+                  <div className="field"><label>Size</label>
+                    <select className="select" value={pendingVariant} onChange={(e) => setPendingVariant(e.target.value)}>
+                      <option value="">Regular -- ${(pendingItem.price_cents / 100).toFixed(2)}</option>
+                      {pendingItem.size_options.map((o) => <option key={o.label} value={o.label}>{o.label} -- ${(o.price_cents / 100).toFixed(2)}</option>)}
+                    </select>
+                  </div>
+                )}
+                <button type="button" className="checkAvailabilityBtn" onClick={addLine} disabled={!pendingItemId} style={{ gridColumn: "1 / -1" }}>
+                  <Plus size={15} />Add to order
+                </button>
               </div>
             )}
-            <button type="button" className="checkAvailabilityBtn" onClick={addLine} disabled={!pendingItemId} style={{ gridColumn: "1 / -1" }}>
-              <Plus size={15} />Add to order
-            </button>
           </div>
-        </div>
+        )}
 
         <div className="modalSection">
           <div className="modalSectionTitle">
-            2. Order {lines.length > 0 && <span className="cardHint">({lines.reduce((n, l) => n + l.quantity, 0)} item{lines.reduce((n, l) => n + l.quantity, 0) === 1 ? "" : "s"})</span>}
+            3. Order {lines.length > 0 && <span className="cardHint">({lines.reduce((n, l) => n + l.quantity, 0)} item{lines.reduce((n, l) => n + l.quantity, 0) === 1 ? "" : "s"})</span>}
           </div>
           {lines.length === 0 ? (
-            <p className="cardHint" style={{ padding: "10px 0" }}>No items added yet -- pick a menu item above and click Add to order.</p>
+            <p className="cardHint" style={{ padding: "10px 0" }}>{slot ? "No items added yet -- pick a menu item above and click Add to order." : "Pick a pickup shift first."}</p>
           ) : (
             <>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {lines.map((line) => {
-                  const item = items.find((i) => i.id === line.menuItemId);
+                  const item = items.find((i) => Number(i.id) === Number(line.menuItemId));
                   const unit = lineUnitPriceCents(line);
                   return (
                     <div key={lineKey(line)} className="orderLine">
@@ -2468,25 +2873,37 @@ function NewTakeawayModal({ onClose, onSaved }) {
 
         <form onSubmit={(e) => { e.preventDefault(); getQuote(); }}>
           <div className="modalSection">
-            <div className="modalSectionTitle">3. Customer &amp; pickup</div>
+            <div className="modalSectionTitle">4. Customer &amp; pickup time</div>
             <div className="formGrid">
               <div className="field"><label>Customer name</label><input className="textInput" required value={form.customerName} onChange={(e) => setForm({ ...form, customerName: e.target.value })} /></div>
               <div className="field"><label>Phone</label><input className="textInput" required value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
               <div className="field" style={{ gridColumn: "1 / -1" }}>
-                <label>Pickup slot</label>
-                <div className="pillRow">
-                  {SLOT_OPTIONS.map(([k, l]) => (
-                    <button type="button" key={k} className={`button small ${form.requestedSlot === k ? "primary" : "secondary"}`} onClick={() => setForm({ ...form, requestedSlot: k })}>{l}</button>
-                  ))}
-                </div>
+                <label>Pickup time{slot ? ` (within ${SLOT_LABELS[slot]})` : ""}</label>
+                {!slot ? (
+                  <div className="cardHint">Pick a shift above first.</div>
+                ) : !pickup ? (
+                  <div className="cardHint">Loading available pickup times...</div>
+                ) : timesForSlot.length === 0 ? (
+                  <div className="cardHint" style={{ color: "var(--danger)" }}>
+                    No pickup times left in the {SLOT_LABELS[slot].toLowerCase()} shift today -- the kitchen needs {pickup.prepBufferMinutes} minutes&rsquo; notice. Try a later shift.
+                  </div>
+                ) : (
+                  <>
+                    <select className="select" required value={form.requestedTime} onChange={(e) => setForm({ ...form, requestedTime: e.target.value })}>
+                      {timesForSlot.map((t) => <option key={t} value={t}>{formatTime12h(t)}</option>)}
+                    </select>
+                    <div className="cardHint" style={{ marginTop: 6 }}>Fixed {pickup.intervalMinutes}-minute pickup slots, at least {pickup.prepBufferMinutes} minutes out for prep.</div>
+                  </>
+                )}
               </div>
               <div className="field" style={{ gridColumn: "1 / -1" }}><label>Notes</label><textarea className="textarea" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
             </div>
           </div>
-          <button className="button primary" type="submit" disabled={quoting || lines.length === 0} style={{ width: "100%", justifyContent: "center", marginTop: 4 }}>
-            {quoting ? "Pricing..." : lines.length === 0 ? "Add at least one item" : "Review & price order"}
+          <button className="button primary" type="submit" disabled={quoting || !slot || lines.length === 0 || !form.requestedTime} style={{ width: "100%", justifyContent: "center", marginTop: 4 }}>
+            {quoting ? "Pricing..." : !slot ? "Pick a pickup shift" : lines.length === 0 ? "Add at least one item" : !form.requestedTime ? "No pickup times available" : "Review & price order"}
           </button>
         </form>
+        </div>
       </div>
     </div>
   );
@@ -2772,6 +3189,7 @@ function AddStaffModal({ onClose, onSaved }) {
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalCard" onClick={(e) => e.stopPropagation()}>
         <div className="modalHeader"><h3>Add staff account</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        <div className="modalBody">
         {error && <div className="loginError">{error}</div>}
         <form onSubmit={submit} className="formGrid">
           <div className="field"><label>Name</label><input className="textInput" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
@@ -2786,6 +3204,7 @@ function AddStaffModal({ onClose, onSaved }) {
           </div>
           <button className="button primary" type="submit" disabled={saving} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Creating..." : "Create account"}</button>
         </form>
+        </div>
       </div>
     </div>
   );

@@ -121,6 +121,16 @@ export async function upsertMenuItem(restaurantId, item) {
   return result.rows[0];
 }
 
+/** Hard delete -- menu_configuration_items cascades, and takeaway_order_items.menu_item_id
+ * is ON DELETE SET NULL, so past takeaway orders keep their captured name/price and are
+ * never destroyed. Any daily/slot schedule still listing this id just drops it silently
+ * next time that day's menu is resolved. */
+export async function deleteMenuItem(restaurantId, itemId) {
+  const result = await query("delete from menu_items where id = $1 and restaurant_id = $2 returning id", [itemId, restaurantId]);
+  if (!result.rows[0]) throw new Error("Menu item not found.");
+  return { deleted: true };
+}
+
 export async function setSoldOut(restaurantId, itemId, soldOut) {
   const result = await query(
     `update menu_items set sold_out = $3, sold_out_date = case when $3 then current_date else null end, updated_at = now()
