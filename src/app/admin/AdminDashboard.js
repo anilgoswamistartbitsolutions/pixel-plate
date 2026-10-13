@@ -337,11 +337,13 @@ function FloorDetailView({ floor, tables, isSuperAdmin, notify, onBack, onReload
     } catch (e) { notify(e.message, "error"); }
   }
 
-  async function handleDrag(table, dx, dy) {
-    const posX = Math.max(0, Number(table.pos_x) + dx);
-    const posY = Math.max(0, Number(table.pos_y) + dy);
-    setLocalTables((prev) => prev.map((t) => (t.id === table.id ? { ...t, pos_x: posX, pos_y: posY } : t)));
-    apiFetch(`/api/tables/${table.id}`, { method: "PATCH", body: JSON.stringify({ action: "move", posX, posY }) }).catch(() => {});
+  async function handleDrag(tableId, posX, posY, commit) {
+    setLocalTables((prev) => prev.map((t) => (t.id === tableId ? { ...t, pos_x: posX, pos_y: posY } : t)));
+    // Only persist once, when the mouse is released -- every intermediate move only updates
+    // the on-screen position so dragging doesn't fire a request per pixel.
+    if (commit) {
+      apiFetch(`/api/tables/${tableId}`, { method: "PATCH", body: JSON.stringify({ action: "move", posX, posY }) }).catch(() => {});
+    }
   }
 
   return (
@@ -399,19 +401,32 @@ function DraggableTable({ table, selected, onSelect, onDrag }) {
     if (!table.active) { onSelect(); return; }
     e.preventDefault();
     setDragging(false);
+    // Anchor to the position/cursor at drag start and always compute the new absolute
+    // position from that anchor -- the previous version recomputed from the component's
+    // original (never-updated) `table` prop plus only the latest incremental delta each
+    // move event, so the table barely twitched near its start point instead of following
+    // the cursor.
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startPosX = Number(table.pos_x);
+    const startPosY = Number(table.pos_y);
     let moved = false;
-    let last = { x: e.clientX, y: e.clientY };
+    let lastPos = { x: startPosX, y: startPosY };
     function onMove(ev) {
-      const dx = ev.clientX - last.x;
-      const dy = ev.clientY - last.y;
-      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) moved = true;
-      last = { x: ev.clientX, y: ev.clientY };
-      if (moved) { setDragging(true); onDrag(table, dx, dy); }
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moved = true;
+      if (moved) {
+        setDragging(true);
+        lastPos = { x: Math.max(0, startPosX + dx), y: Math.max(0, startPosY + dy) };
+        onDrag(table.id, lastPos.x, lastPos.y, false); // visual-only while dragging
+      }
     }
     function onUp() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       if (!moved) onSelect();
+      else onDrag(table.id, lastPos.x, lastPos.y, true); // persist once, on release
       setTimeout(() => setDragging(false), 0);
     }
     window.addEventListener("mousemove", onMove);

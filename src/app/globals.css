@@ -250,9 +250,20 @@ a { color: var(--brand-dark); text-decoration: none; }
 .pillRow { display: flex; gap: 6px; flex-wrap: wrap; }
 .pill { font-size: 11.5px; padding: 4px 10px; border-radius: 999px; background: var(--line-soft); color: #5c5245; border: 1px solid var(--line); }
 
-.modalOverlay { position: fixed; inset: 0; background: rgba(43,36,32,.4); display: flex; align-items: center; justify-content: center; z-index: 80; padding: 20px; animation: fadeIn .18s ease; }
-.modalCard { background: #fff; border-radius: var(--radius); padding: 24px; width: 100%; max-width: 520px; box-shadow: var(--shadow-lg); max-height: 90vh; overflow-y: auto; animation: popIn .22s ease; }
-.modalHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.modalOverlay { position: fixed; inset: 0; background: rgba(43,36,32,.45); backdrop-filter: blur(1.5px); display: flex; align-items: center; justify-content: center; z-index: 80; padding: 20px; animation: fadeIn .18s ease; }
+.modalCard {
+  background: #fff; border-radius: 20px; padding: 0; width: 100%; max-width: 520px;
+  box-shadow: 0 24px 60px rgba(43,36,32,.22); max-height: 88vh; overflow-y: auto; overscroll-behavior: contain;
+  animation: popIn .22s ease; border: 1px solid var(--line);
+}
+.modalCard > *:not(.modalHeader) { padding-left: 26px; padding-right: 26px; }
+.modalCard > *:last-child { padding-bottom: 26px; }
+.modalHeader {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  position: sticky; top: 0; background: #fff; z-index: 2;
+  padding: 22px 26px 16px; margin-bottom: 18px; border-bottom: 1px solid var(--line-soft);
+}
+.modalHeader h3 { font-size: 16.5px; }
 
 /* ---------------------------------------------------------------- Floating voice launcher (bottom-right) */
 
