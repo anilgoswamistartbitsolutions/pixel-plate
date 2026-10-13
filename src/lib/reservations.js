@@ -30,7 +30,8 @@ export async function createReservation({
   seatingPreference = "together",
   notes,
   source = "staff",
-  createdByStaffId = null
+  createdByStaffId = null,
+  preferredTableId = null
 }) {
   if (!customerName?.trim()) throw new BookingError("Customer name is required.", "validation");
   if (!phone?.trim()) throw new BookingError("A contact phone number is required.", "validation");
@@ -49,7 +50,7 @@ export async function createReservation({
 
   return withTransaction(async (client) => {
     await sweepExpiredHolds(client, restaurantId);
-    const plan = await planAllocation({ client, restaurantId, startAt, endAt, partySize, preference: seatingPreference });
+    const plan = await planAllocation({ client, restaurantId, startAt, endAt, partySize, preference: seatingPreference, preferredTableId });
 
     if (!plan.ok) {
       // No seats fit right now -- offer a pending group/staff-reviewed request instead of
@@ -226,10 +227,19 @@ export async function getReservationStatus({ restaurantId, bookingRef, phone }) 
   return reservation;
 }
 
-export async function listReservations({ restaurantId, date, status, limit = 200 }) {
+export async function listReservations({ restaurantId, date, dateFrom, dateTo, status, limit = 200 }) {
   const conditions = ["restaurant_id = $1"];
   const values = [restaurantId];
-  if (date) {
+  if (dateFrom || dateTo) {
+    if (dateFrom) {
+      values.push(dateFrom);
+      conditions.push(`reservation_date >= $${values.length}`);
+    }
+    if (dateTo) {
+      values.push(dateTo);
+      conditions.push(`reservation_date <= $${values.length}`);
+    }
+  } else if (date) {
     values.push(date);
     conditions.push(`reservation_date = $${values.length}`);
   }

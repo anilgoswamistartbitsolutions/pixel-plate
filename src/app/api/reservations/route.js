@@ -8,8 +8,10 @@ export async function GET(request) {
   const auth = requireStaffAuth(request);
   if (auth instanceof Response) return auth;
   const date = getSearchParam(request, "date");
+  const dateFrom = getSearchParam(request, "from");
+  const dateTo = getSearchParam(request, "to");
   const status = getSearchParam(request, "status");
-  const list = await listReservations({ restaurantId: auth.restaurantId, date, status });
+  const list = await listReservations({ restaurantId: auth.restaurantId, date, dateFrom, dateTo, status });
   return ok(list);
 }
 
@@ -29,7 +31,8 @@ export async function POST(request) {
       seatingPreference: body.seatingPreference || "together",
       notes: body.notes,
       source: "staff",
-      createdByStaffId: auth.sub
+      createdByStaffId: auth.sub,
+      preferredTableId: body.preferredTableId || null
     });
     return created(result);
   } catch (error) {

@@ -33,8 +33,15 @@ export async function listFloorPlan(restaurantId) {
     reservationsByTable.set(row.table_id, list);
   }
 
+  // pos_x/pos_y/width/height are `numeric` columns -- node-pg returns those as strings, and
+  // an inline React style only auto-appends "px" to an actual number, so every table silently
+  // collapsed to 0,0 without this cast.
   return tables.rows.map((table) => ({
     ...table,
+    pos_x: Number(table.pos_x),
+    pos_y: Number(table.pos_y),
+    width: Number(table.width),
+    height: Number(table.height),
     seats: seatsByTable.get(table.id) || [],
     upcomingReservations: reservationsByTable.get(table.id) || []
   }));

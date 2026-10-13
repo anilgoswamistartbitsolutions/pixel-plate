@@ -17,7 +17,7 @@ export function toWindow(isoDate, hhmm, durationMinutes) {
   return { startAt: start.toISOString(), endAt: end.toISOString() };
 }
 
-async function loadTablesWithFreeSeats(client, restaurantId, startAt, endAt) {
+export async function loadTablesWithFreeSeats(client, restaurantId, startAt, endAt) {
   const tablesResult = await client.query(
     `select * from restaurant_tables where restaurant_id = $1 and active = true order by code`,
     [restaurantId]
@@ -63,8 +63,27 @@ async function loadCombinations(client, restaurantId) {
  * preference: 'together' (default -- everyone at one table/combo), 'split_ok' (several
  * nearby tables acceptable), or 'shared_ok' (willing to share a table with strangers).
  */
-export async function planAllocation({ client, restaurantId, startAt, endAt, partySize, preference = "together" }) {
+export async function planAllocation({ client, restaurantId, startAt, endAt, partySize, preference = "together", preferredTableId = null }) {
   const tables = await loadTablesWithFreeSeats(client, restaurantId, startAt, endAt);
+
+  // Staff (or a guest who saw the options list) picked a specific table -- honor it if it
+  // genuinely still has enough free seats; otherwise fall through to the normal engine below
+  // rather than failing outright, since availability can shift between the check and the book.
+  if (preferredTableId) {
+    const preferred = tables.find((t) => String(t.id) === String(preferredTableId));
+    if (preferred && preferred.freeSeats.length >= partySize) {
+      const seats = preferred.freeSeats.slice(0, partySize);
+      const fullTable = seats.length === preferred.seats.length;
+      return {
+        ok: true,
+        seatingMode: fullTable ? "full_table" : preferred.shareable ? "shared" : "partial",
+        tableIds: [preferred.id],
+        seatIds: seats.map((s) => s.id),
+        requiresApproval: fullTable && preferred.full_table_requires_approval,
+        summary: `${preferred.display_name}: seats ${seats.map((s) => s.code).join(", ")}`
+      };
+    }
+  }
 
   // 1. One table, exactly enough free seats, everyone together.
   const singleTable = tables
@@ -153,6 +172,23 @@ export async function planAllocation({ client, restaurantId, startAt, endAt, par
 export async function checkAvailability({ restaurantId, startAt, endAt, partySize, preference }) {
   const { withTransaction } = await import("@/lib/db");
   return withTransaction((client) => planAllocation({ client, restaurantId, startAt, endAt, partySize, preference }));
+}
+
+/** Every active table with enough free seats for partySize, for a "pick a table" UI --
+ * staff see exactly how many options exist instead of the engine silently picking one. */
+export async function listTableOptions({ restaurantId, startAt, endAt, partySize }) {
+  const { withTransaction } = await import("@/lib/db");
+  return withTransaction(async (client) => {
+    const tables = await loadTablesWithFreeSeats(client, restaurantId, startAt, endAt);
+    return tables
+      .filter((t) => t.freeSeats.length >= partySize)
+      .sort((a, b) => a.capacity - b.capacity)
+      .map((t) => ({
+        id: t.id, code: t.code, displayName: t.display_name, capacity: t.capacity,
+        tableType: t.table_type, shareable: t.shareable, freeSeatCount: t.freeSeats.length,
+        fullTable: t.freeSeats.length === t.seats.length
+      }));
+  });
 }
 
 export async function sweepExpiredHolds(client, restaurantId) {

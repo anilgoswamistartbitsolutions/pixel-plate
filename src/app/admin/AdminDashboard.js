@@ -9,6 +9,9 @@ import {
 } from "lucide-react";
 import { apiFetch, getStaff, clearSession } from "@/lib/api-client";
 import VoiceAgentWidget from "@/components/VoiceAgentWidget";
+import {
+  ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend
+} from "recharts";
 
 const NAV_ITEMS = [
   { key: "overview", label: "Overview", icon: LayoutGrid },
@@ -47,7 +50,7 @@ export default function AdminDashboard() {
     router.push("/login");
   }
 
-  if (!ready) return <div style={{ padding: 40 }}>Loading Pixel Plate...</div>;
+  if (!ready) return <div className="fullPageLoader"><div className="spinner" />Loading Pixel Plate...</div>;
 
   const visibleNav = NAV_ITEMS.filter((item) => !item.superOnly || staff.role === "super_admin");
 
@@ -117,10 +120,12 @@ export default function AdminDashboard() {
 
 function OverviewView({ date, onNavigate }) {
   const [data, setData] = useState(null);
+  const [trend, setTrend] = useState(null);
   const [err, setErr] = useState("");
 
   useEffect(() => {
     apiFetch(`/api/overview?date=${date}`).then(setData).catch((e) => setErr(e.message));
+    apiFetch(`/api/reports/trend?from=${addDays(date, -6)}&to=${date}`).then(setTrend).catch(() => {});
   }, [date]);
 
   if (err) return <ErrorBlock message={err} />;
@@ -137,6 +142,35 @@ function OverviewView({ date, onNavigate }) {
         <StatCard label="Cancellations" value={r.cancelled.count} foot="Today" onClick={() => onNavigate("reservations")} />
         <StatCard label="Seats occupied now" value={`${occupancyPct}%`} foot={`${data.seats.occupied_now} of ${data.seats.total_seats} seats`} onClick={() => onNavigate("floorplan")} />
       </div>
+      <div className="card" style={{ marginBottom: 22 }}>
+        <div className="sectionHeader" style={{ marginBottom: 10 }}>
+          <div>
+            <div className="cardTitle">Last 7 days</div>
+            <p className="cardHint">Confirmed bookings and guests, at a glance.</p>
+          </div>
+          <button className="button ghost small" onClick={() => onNavigate("reports")}>Full reports &rarr;</button>
+        </div>
+        {!trend ? <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center" }}><div className="spinner" /></div> : trend.length === 0 ? (
+          <EmptyState title="No data yet" hint="Reservation history will chart here once bookings come in." />
+        ) : (
+          <ResponsiveContainer width="100%" height={200}>
+            <AreaChart data={trend} margin={{ left: -16, right: 8 }}>
+              <defs>
+                <linearGradient id="ppOverviewBrand" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#d97b4a" stopOpacity={0.35} />
+                  <stop offset="100%" stopColor="#d97b4a" stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#ecdfd0" vertical={false} />
+              <XAxis dataKey="date" tickFormatter={(d) => new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { weekday: "short" })} tick={{ fontSize: 11, fill: "#847a6f" }} axisLine={{ stroke: "#ecdfd0" }} tickLine={false} />
+              <YAxis tick={{ fontSize: 11, fill: "#847a6f" }} axisLine={false} tickLine={false} allowDecimals={false} />
+              <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid #ecdfd0", fontSize: 12.5 }} />
+              <Area type="monotone" dataKey="confirmed" name="Confirmed" stroke="#d97b4a" fill="url(#ppOverviewBrand)" strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
       <div className="grid cols-2">
         <div className="card">
           <div className="cardTitle">Recent calls</div>
@@ -181,10 +215,14 @@ function FloorPlanView({ notify }) {
   const [tables, setTables] = useState(null);
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState(null);
   const [err, setErr] = useState("");
 
   const load = useCallback(() => {
-    apiFetch("/api/floor-plan").then(setTables).catch((e) => setErr(e.message));
+    apiFetch("/api/floor-plan").then((data) => {
+      setTables(data);
+      setSelected((prev) => (prev ? data.find((t) => t.id === prev.id) || null : null));
+    }).catch((e) => setErr(e.message));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -198,8 +236,8 @@ function FloorPlanView({ notify }) {
   }
 
   async function handleDrag(table, dx, dy) {
-    const posX = Number(table.pos_x) + dx;
-    const posY = Number(table.pos_y) + dy;
+    const posX = Math.max(0, Number(table.pos_x) + dx);
+    const posY = Math.max(0, Number(table.pos_y) + dy);
     setTables((prev) => prev.map((t) => (t.id === table.id ? { ...t, pos_x: posX, pos_y: posY } : t)));
     apiFetch(`/api/tables/${table.id}`, { method: "PATCH", body: JSON.stringify({ action: "move", posX, posY }) }).catch(() => {});
   }
@@ -212,7 +250,7 @@ function FloorPlanView({ notify }) {
       <div className="sectionHeader">
         <div>
           <h2>Floor plan</h2>
-          <p>Drag tables to arrange the room. Click one to see seats and upcoming reservations.</p>
+          <p>Drag tables to arrange the room -- position saves automatically. Click a table to see seats, reservations, and edit it.</p>
         </div>
         <button className="button primary" onClick={() => setShowAdd(true)}><Plus size={15} />Add table</button>
       </div>
@@ -224,20 +262,25 @@ function FloorPlanView({ notify }) {
         <span><span className="legendDot" style={{ background: "#eee7db", border: "2px solid var(--muted)" }} />Inactive</span>
       </div>
 
-      <div className="grid cols-2" style={{ gridTemplateColumns: "1.3fr 1fr", alignItems: "start" }}>
-        <div className="floorCanvasWrap">
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div className="floorCanvasWrap" style={{ flex: "1 1 560px", minWidth: 320 }}>
           <div className="floorCanvas">
+            {tables.length === 0 && (
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <EmptyState title="No tables yet" hint="Click Add table to place your first one on the floor plan." />
+              </div>
+            )}
             {tables.map((table) => (
               <DraggableTable key={table.id} table={table} selected={selected?.id === table.id} onSelect={() => setSelected(table)} onDrag={handleDrag} />
             ))}
           </div>
         </div>
 
-        <div className="card">
+        <div className="card" style={{ flex: "0 0 300px", minWidth: 280, position: "sticky", top: 86 }}>
           {!selected ? (
             <EmptyState title="Select a table" hint="Click a table on the floor plan to see its seats and reservations." />
           ) : (
-            <TableDetail table={selected} onToggleActive={toggleActive} onClose={() => setSelected(null)} />
+            <TableDetail table={selected} onToggleActive={toggleActive} onEdit={() => setEditing(selected)} onClose={() => setSelected(null)} />
           )}
         </div>
       </div>
@@ -256,7 +299,10 @@ function FloorPlanView({ notify }) {
                   <td>{t.table_type}</td>
                   <td>{t.shareable ? "Yes" : "No"}</td>
                   <td><span className={`badge ${t.active ? "active" : "inactive"}`}>{t.active ? "Active" : "Inactive"}</span></td>
-                  <td><button className="button ghost small" onClick={() => toggleActive(t)}>{t.active ? "Deactivate" : "Reactivate"}</button></td>
+                  <td style={{ display: "flex", gap: 6 }}>
+                    <button className="button secondary small" onClick={() => setEditing(t)}>Edit</button>
+                    <button className="button ghost small" onClick={() => toggleActive(t)}>{t.active ? "Deactivate" : "Reactivate"}</button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -265,6 +311,7 @@ function FloorPlanView({ notify }) {
       </div>
 
       {showAdd && <AddTableModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); notify("Table created"); load(); }} />}
+      {editing && <EditTableModal table={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); notify("Table updated"); load(); }} />}
     </div>
   );
 }
@@ -274,18 +321,22 @@ function DraggableTable({ table, selected, onSelect, onDrag }) {
 
   function onMouseDown(e) {
     if (!table.active) { onSelect(); return; }
-    setDragging(true);
+    e.preventDefault();
+    setDragging(false);
+    let moved = false;
     let last = { x: e.clientX, y: e.clientY };
     function onMove(ev) {
       const dx = ev.clientX - last.x;
       const dy = ev.clientY - last.y;
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) moved = true;
       last = { x: ev.clientX, y: ev.clientY };
-      onDrag(table, dx, dy);
+      if (moved) { setDragging(true); onDrag(table, dx, dy); }
     }
     function onUp() {
-      setDragging(false);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      if (!moved) onSelect();
+      setTimeout(() => setDragging(false), 0);
     }
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -298,9 +349,8 @@ function DraggableTable({ table, selected, onSelect, onDrag }) {
   return (
     <div
       className={`floorTable ${table.shape} ${statusClass} ${selected ? "selected" : ""}`}
-      style={{ left: table.pos_x, top: table.pos_y, width: table.width, height: table.height }}
+      style={{ left: `${table.pos_x}px`, top: `${table.pos_y}px`, width: `${table.width}px`, height: `${table.height}px` }}
       onMouseDown={onMouseDown}
-      onClick={() => !dragging && onSelect()}
     >
       <span className="code">{table.code}</span>
       <span className="cap">{table.capacity} seats</span>
@@ -308,7 +358,7 @@ function DraggableTable({ table, selected, onSelect, onDrag }) {
   );
 }
 
-function TableDetail({ table, onToggleActive, onClose }) {
+function TableDetail({ table, onToggleActive, onEdit, onClose }) {
   return (
     <div>
       <div className="modalHeader" style={{ marginBottom: 12 }}>
@@ -337,9 +387,12 @@ function TableDetail({ table, onToggleActive, onClose }) {
         </div>
       )}
 
-      <button className="button danger small" style={{ marginTop: 16 }} onClick={() => onToggleActive(table)}>
-        {table.active ? "Deactivate table" : "Reactivate table"}
-      </button>
+      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+        <button className="button secondary small" onClick={onEdit}>Edit table</button>
+        <button className="button danger small" onClick={() => onToggleActive(table)}>
+          {table.active ? "Deactivate" : "Reactivate"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -389,6 +442,62 @@ function AddTableModal({ onClose, onSaved }) {
   );
 }
 
+function EditTableModal({ table, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    displayName: table.display_name, capacity: table.capacity, tableType: table.table_type,
+    shareable: table.shareable, exclusiveOnly: table.exclusive_only, fullTableRequiresApproval: table.full_table_requires_approval
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await apiFetch(`/api/tables/${table.id}`, { method: "PATCH", body: JSON.stringify(form) });
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalCard" onClick={(e) => e.stopPropagation()}>
+        <div className="modalHeader"><h3>Edit table {table.code}</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        {error && <div className="loginError">{error}</div>}
+        <form onSubmit={submit} className="formGrid">
+          <div className="field" style={{ gridColumn: "1 / -1" }}><label>Display name</label><input className="textInput" required value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} /></div>
+          <div className="field">
+            <label>Capacity</label>
+            <input className="textInput" type="number" min="1" required value={form.capacity} onChange={(e) => setForm({ ...form, capacity: Number(e.target.value) })} />
+            <span className="cardHint">Changing this does not alter existing seat codes/allocations.</span>
+          </div>
+          <div className="field"><label>Table type</label>
+            <select className="select" value={form.tableType} onChange={(e) => setForm({ ...form, tableType: e.target.value })}>
+              <option value="standard">Standard</option><option value="shared">Shared</option><option value="private">Private</option><option value="booth">Booth</option>
+            </select>
+          </div>
+          <div className="field" style={{ gridColumn: "1 / -1" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={form.shareable} onChange={(e) => setForm({ ...form, shareable: e.target.checked })} /> Allow sharing with other parties
+            </label>
+          </div>
+          <div className="field" style={{ gridColumn: "1 / -1" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={form.fullTableRequiresApproval} onChange={(e) => setForm({ ...form, fullTableRequiresApproval: e.target.checked })} /> Full-table bookings on this table need staff approval
+            </label>
+          </div>
+          <button className="button primary" type="submit" disabled={saving} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Saving..." : "Save changes"}</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 /* ====================================================================== Reservations */
 
 function ReservationsView({ date, notify }) {
@@ -396,11 +505,17 @@ function ReservationsView({ date, notify }) {
   const [list, setList] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [err, setErr] = useState("");
+  const [rangeMode, setRangeMode] = useState(false);
+  const [rangeFrom, setRangeFrom] = useState(date);
+  const [rangeTo, setRangeTo] = useState(date);
 
   const load = useCallback(() => {
-    const qs = new URLSearchParams({ date, ...(status ? { status } : {}) });
+    const params = rangeMode
+      ? { from: rangeFrom, to: rangeTo }
+      : { date };
+    const qs = new URLSearchParams({ ...params, ...(status ? { status } : {}) });
     apiFetch(`/api/reservations?${qs}`).then(setList).catch((e) => setErr(e.message));
-  }, [date, status]);
+  }, [date, status, rangeMode, rangeFrom, rangeTo]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -426,8 +541,26 @@ function ReservationsView({ date, notify }) {
   return (
     <div>
       <div className="sectionHeader">
-        <div><h2>Reservations</h2><p>Confirmed bookings for {date}, with real-time seat allocations.</p></div>
+        <div>
+          <h2>Reservations</h2>
+          <p>{rangeMode ? `Bookings from ${rangeFrom} to ${rangeTo}` : `Bookings for ${date}`}, with real-time seat allocations.</p>
+        </div>
         <button className="button primary" onClick={() => setShowAdd(true)}><Plus size={15} />New reservation</button>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button className={`button small ${!rangeMode ? "primary" : "secondary"}`} onClick={() => setRangeMode(false)}>Single day</button>
+          <button className={`button small ${rangeMode ? "primary" : "secondary"}`} onClick={() => setRangeMode(true)}>Date range</button>
+        </div>
+        {rangeMode && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input className="dateInput" type="date" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} />
+            <span className="cardHint">to</span>
+            <input className="dateInput" type="date" value={rangeTo} min={rangeFrom} onChange={(e) => setRangeTo(e.target.value)} />
+          </div>
+        )}
+        {!rangeMode && <span className="cardHint">Using the date picker in the top bar. Switch to Date range to view multiple days at once.</span>}
       </div>
 
       <div className="tabRow">
@@ -441,13 +574,14 @@ function ReservationsView({ date, notify }) {
       ) : (
         <div className="tableWrap">
           <table className="table">
-            <thead><tr><th>Ref</th><th>Guest</th><th>Party</th><th>Time</th><th>Seating</th><th>Status</th><th>Source</th><th></th></tr></thead>
+            <thead><tr><th>Ref</th><th>Guest</th><th>Party</th>{rangeMode && <th>Date</th>}<th>Time</th><th>Seating</th><th>Status</th><th>Source</th><th></th></tr></thead>
             <tbody>
               {list.map((r) => (
                 <tr key={r.id}>
                   <td>{r.booking_ref}</td>
                   <td>{r.customer_name}<div className="cardHint">{r.phone}</div></td>
                   <td>{r.party_size}</td>
+                  {rangeMode && <td>{String(r.reservation_date).slice(0, 10)}</td>}
                   <td>{r.start_time?.slice(0, 5)}</td>
                   <td>{r.seating_mode}</td>
                   <td><span className={`badge ${r.status}`}>{r.status}</span></td>
@@ -469,17 +603,44 @@ function ReservationsView({ date, notify }) {
   );
 }
 
+const TIME_SLOTS = [
+  { label: "Morning", icon: "🌅", times: ["08:00", "09:00", "10:00", "11:00"] },
+  { label: "Mid-day", icon: "☀️", times: ["12:00", "13:00", "14:00", "15:00"] },
+  { label: "Evening", icon: "🌙", times: ["18:00", "19:00", "20:00", "21:00"] }
+];
+
 function AddReservationModal({ defaultDate, onClose, onSaved }) {
   const [form, setForm] = useState({ customerName: "", phone: "", partySize: 2, reservationDate: defaultDate, startTime: "19:00", seatingPreference: "together", notes: "" });
+  const [tableId, setTableId] = useState(null);
+  const [options, setOptions] = useState(null);
+  const [checking, setChecking] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  const activeSlot = TIME_SLOTS.find((s) => s.times.includes(form.startTime))?.label;
+
+  async function checkAvailability() {
+    setChecking(true);
+    setError("");
+    setOptions(null);
+    setTableId(null);
+    try {
+      const qs = new URLSearchParams({ date: form.reservationDate, time: form.startTime, partySize: String(form.partySize) });
+      const result = await apiFetch(`/api/availability?${qs}`);
+      setOptions(result.options);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setChecking(false);
+    }
+  }
 
   async function submit(e) {
     e.preventDefault();
     setSaving(true);
     setError("");
     try {
-      const outcome = await apiFetch("/api/reservations", { method: "POST", body: JSON.stringify(form) });
+      const outcome = await apiFetch("/api/reservations", { method: "POST", body: JSON.stringify({ ...form, preferredTableId: tableId }) });
       onSaved(outcome);
     } catch (err) {
       setError(err.message);
@@ -496,9 +657,22 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
         <form onSubmit={submit} className="formGrid">
           <div className="field"><label>Guest name</label><input className="textInput" required value={form.customerName} onChange={(e) => setForm({ ...form, customerName: e.target.value })} /></div>
           <div className="field"><label>Phone</label><input className="textInput" required value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
-          <div className="field"><label>Party size</label><input className="textInput" type="number" min="1" required value={form.partySize} onChange={(e) => setForm({ ...form, partySize: Number(e.target.value) })} /></div>
-          <div className="field"><label>Date</label><input className="textInput" type="date" required value={form.reservationDate} onChange={(e) => setForm({ ...form, reservationDate: e.target.value })} /></div>
-          <div className="field"><label>Time</label><input className="textInput" type="time" required value={form.startTime} onChange={(e) => setForm({ ...form, startTime: e.target.value })} /></div>
+          <div className="field"><label>Party size</label><input className="textInput" type="number" min="1" required value={form.partySize} onChange={(e) => { setForm({ ...form, partySize: Number(e.target.value) }); setOptions(null); }} /></div>
+          <div className="field"><label>Date</label><input className="textInput" type="date" required value={form.reservationDate} onChange={(e) => { setForm({ ...form, reservationDate: e.target.value }); setOptions(null); }} /></div>
+
+          <div className="field" style={{ gridColumn: "1 / -1" }}>
+            <label>Time of day</label>
+            <div className="pillRow">
+              {TIME_SLOTS.map((slot) => (
+                <button type="button" key={slot.label}
+                  className={`button small ${activeSlot === slot.label ? "primary" : "secondary"}`}
+                  onClick={() => { setForm({ ...form, startTime: slot.times[0] }); setOptions(null); }}>
+                  {slot.icon} {slot.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="field"><label>Exact time</label><input className="textInput" type="time" required value={form.startTime} onChange={(e) => { setForm({ ...form, startTime: e.target.value }); setOptions(null); }} /></div>
           <div className="field"><label>Seating preference</label>
             <select className="select" value={form.seatingPreference} onChange={(e) => setForm({ ...form, seatingPreference: e.target.value })}>
               <option value="together">Everyone together</option>
@@ -506,8 +680,38 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
               <option value="shared_ok">Shared table okay</option>
             </select>
           </div>
+
+          <div className="field" style={{ gridColumn: "1 / -1" }}>
+            <button type="button" className="button secondary small" onClick={checkAvailability} disabled={checking}>
+              {checking ? "Checking..." : "Check table availability"}
+            </button>
+          </div>
+
+          {options && (
+            <div className="field" style={{ gridColumn: "1 / -1" }}>
+              {options.length === 0 ? (
+                <div className="cardHint" style={{ background: "var(--amber-soft)", padding: 10, borderRadius: 10, color: "#9a6d13" }}>
+                  No tables currently fit {form.partySize} guests at that time -- booking will be sent for staff review as a group request.
+                </div>
+              ) : (
+                <>
+                  <label>{options.length} table{options.length === 1 ? "" : "s"} available -- pick one (optional, we&rsquo;ll choose the best fit otherwise)</label>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+                    {options.map((o) => (
+                      <label key={o.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: `1px solid ${tableId === o.id ? "var(--brand)" : "var(--line)"}`, borderRadius: "var(--radius-sm)", background: tableId === o.id ? "var(--brand-soft)" : "#fff", cursor: "pointer" }}>
+                        <input type="radio" name="tableOption" checked={tableId === o.id} onChange={() => setTableId(o.id)} />
+                        <span style={{ fontSize: 13.5, fontWeight: 600 }}>{o.displayName}</span>
+                        <span className="cardHint">{o.capacity} seats &middot; {o.freeSeatCount} free{o.fullTable ? " &middot; full table" : ""}</span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           <div className="field" style={{ gridColumn: "1 / -1" }}><label>Notes</label><textarea className="textarea" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
-          <button className="button primary" type="submit" disabled={saving} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Checking availability..." : "Check & book"}</button>
+          <button className="button primary" type="submit" disabled={saving} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Booking..." : "Check & book"}</button>
         </form>
       </div>
     </div>
@@ -1141,32 +1345,144 @@ function CallsView({ notify }) {
 
 /* ====================================================================== Reports */
 
+function addDays(isoDate, delta) {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
 function ReportsView({ date }) {
-  const [data, setData] = useState(null);
-  useEffect(() => { apiFetch(`/api/overview?date=${date}`).then(setData).catch(() => {}); }, [date]);
-  if (!data) return <LoadingBlock />;
-  const rows = Object.entries(data.reservations);
+  const [tab, setTab] = useState("charts");
+  const [from, setFrom] = useState(addDays(date, -13));
+  const [to, setTo] = useState(date);
+  const [trend, setTrend] = useState(null);
+  const [dayData, setDayData] = useState(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    apiFetch(`/api/reports/trend?from=${from}&to=${to}`).then(setTrend).catch((e) => setErr(e.message));
+  }, [from, to]);
+  useEffect(() => { apiFetch(`/api/overview?date=${date}`).then(setDayData).catch(() => {}); }, [date]);
+
+  const presets = [
+    ["Last 7 days", 6], ["Last 14 days", 13], ["Last 30 days", 29]
+  ];
 
   return (
     <div>
-      <div className="sectionHeader"><div><h2>Reports</h2><p>Reservation mix for {date}.</p></div></div>
-      <div className="tableWrap">
-        <table className="table">
-          <thead><tr><th>Status</th><th>Count</th><th>Guests</th></tr></thead>
-          <tbody>
-            {rows.map(([status, v]) => (
-              <tr key={status}><td><span className={`badge ${status}`}>{status.replace("_", " ")}</span></td><td>{v.count}</td><td>{v.guests}</td></tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="sectionHeader"><div><h2>Reports</h2><p>Reservation and call trends over a date range, plus today&rsquo;s status mix.</p></div></div>
+
+      <div className="tabRow">
+        <button className={`tabChip ${tab === "charts" ? "active" : ""}`} onClick={() => setTab("charts")}>Charts</button>
+        <button className={`tabChip ${tab === "table" ? "active" : ""}`} onClick={() => setTab("table")}>Status table</button>
       </div>
-      <div className="card" style={{ marginTop: 20 }}>
-        <div className="cardTitle">Seat occupancy right now</div>
-        <div className="statValue">{data.seats.occupied_now} / {data.seats.total_seats}</div>
-        <div className="cardHint">seats currently occupied</div>
+
+      {tab === "charts" && (
+        <>
+          <div className="card" style={{ marginBottom: 18, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            {presets.map(([label, days]) => (
+              <button key={label} className="button secondary small" onClick={() => { setFrom(addDays(to, -days)); }}>{label}</button>
+            ))}
+            <span style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
+              <input className="dateInput" type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} />
+              <span className="cardHint">to</span>
+              <input className="dateInput" type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} />
+            </span>
+          </div>
+
+          {err && <ErrorBlock message={err} />}
+          {!trend ? <LoadingBlock /> : <ReportCharts trend={trend} />}
+        </>
+      )}
+
+      {tab === "table" && (
+        !dayData ? <LoadingBlock /> : (
+          <>
+            <div className="tableWrap">
+              <table className="table">
+                <thead><tr><th>Status</th><th>Count</th><th>Guests</th></tr></thead>
+                <tbody>
+                  {Object.entries(dayData.reservations).map(([status, v]) => (
+                    <tr key={status}><td><span className={`badge ${status}`}>{status.replace("_", " ")}</span></td><td>{v.count}</td><td>{v.guests}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="card" style={{ marginTop: 20 }}>
+              <div className="cardTitle">Seat occupancy right now</div>
+              <div className="statValue">{dayData.seats.occupied_now} / {dayData.seats.total_seats}</div>
+              <div className="cardHint">seats currently occupied</div>
+            </div>
+          </>
+        )
+      )}
+    </div>
+  );
+}
+
+function ReportChartsInner({ trend }) {
+  const totalGuests = trend.reduce((sum, d) => sum + d.guests, 0);
+  const totalConfirmed = trend.reduce((sum, d) => sum + d.confirmed, 0);
+  const totalCalls = trend.reduce((sum, d) => sum + d.calls, 0);
+  const totalCancelled = trend.reduce((sum, d) => sum + d.cancelled, 0);
+
+  const fmtDate = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+  return (
+    <div>
+      <div className="grid cols-4" style={{ marginBottom: 20 }}>
+        <StatCard label="Confirmed bookings" value={totalConfirmed} foot="in range" />
+        <StatCard label="Guests" value={totalGuests} foot="in range" />
+        <StatCard label="Calls" value={totalCalls} foot="in range" />
+        <StatCard label="Cancellations" value={totalCancelled} foot="in range" />
+      </div>
+
+      <div className="card" style={{ marginBottom: 18 }}>
+        <div className="cardTitle" style={{ marginBottom: 14 }}>Confirmed reservations &amp; guests</div>
+        <ResponsiveContainer width="100%" height={280}>
+          <AreaChart data={trend} margin={{ left: -16, right: 8 }}>
+            <defs>
+              <linearGradient id="ppBrand" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#d97b4a" stopOpacity={0.35} />
+                <stop offset="100%" stopColor="#d97b4a" stopOpacity={0.02} />
+              </linearGradient>
+              <linearGradient id="ppAmber" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#e3a23a" stopOpacity={0.3} />
+                <stop offset="100%" stopColor="#e3a23a" stopOpacity={0.02} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#ecdfd0" vertical={false} />
+            <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: "#847a6f" }} axisLine={{ stroke: "#ecdfd0" }} tickLine={false} />
+            <YAxis tick={{ fontSize: 11, fill: "#847a6f" }} axisLine={false} tickLine={false} allowDecimals={false} />
+            <Tooltip labelFormatter={fmtDate} contentStyle={{ borderRadius: 10, border: "1px solid #ecdfd0", fontSize: 12.5 }} />
+            <Legend wrapperStyle={{ fontSize: 12.5 }} />
+            <Area type="monotone" dataKey="confirmed" name="Confirmed bookings" stroke="#d97b4a" fill="url(#ppBrand)" strokeWidth={2} />
+            <Area type="monotone" dataKey="guests" name="Guests" stroke="#e3a23a" fill="url(#ppAmber)" strokeWidth={2} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="card">
+        <div className="cardTitle" style={{ marginBottom: 14 }}>Calls &amp; cancellations</div>
+        <ResponsiveContainer width="100%" height={240}>
+          <BarChart data={trend} margin={{ left: -16, right: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#ecdfd0" vertical={false} />
+            <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: "#847a6f" }} axisLine={{ stroke: "#ecdfd0" }} tickLine={false} />
+            <YAxis tick={{ fontSize: 11, fill: "#847a6f" }} axisLine={false} tickLine={false} allowDecimals={false} />
+            <Tooltip labelFormatter={fmtDate} contentStyle={{ borderRadius: 10, border: "1px solid #ecdfd0", fontSize: 12.5 }} />
+            <Legend wrapperStyle={{ fontSize: 12.5 }} />
+            <Bar dataKey="calls" name="Calls" fill="#3f8fd6" radius={[4, 4, 0, 0]} />
+            <Bar dataKey="cancelled" name="Cancelled" fill="#e2574c" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );
+}
+
+function ReportCharts({ trend }) {
+  if (trend.length === 0) return <EmptyState title="No data in this range" hint="Pick a different date range." />;
+  return <ReportChartsInner trend={trend} />;
 }
 
 /* ====================================================================== Team */
@@ -1258,6 +1574,13 @@ function AddStaffModal({ onClose, onSaved }) {
 
 /* ====================================================================== Shared bits */
 
-function LoadingBlock() { return <div className="emptyState">Loading...</div>; }
+function LoadingBlock() {
+  return (
+    <div className="emptyState" style={{ padding: "60px 20px" }}>
+      <div className="spinner" />
+      <p style={{ marginTop: 14 }}>Loading...</p>
+    </div>
+  );
+}
 function ErrorBlock({ message }) { return <div className="emptyState"><h3>Something went wrong</h3><p>{message}</p></div>; }
 function EmptyState({ title, hint }) { return <div className="emptyState"><Sparkles size={22} style={{ marginBottom: 10, opacity: 0.5 }} /><h3>{title}</h3><p>{hint}</p></div>; }
