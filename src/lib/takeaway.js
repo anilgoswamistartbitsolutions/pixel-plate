@@ -1,5 +1,6 @@
 import { query, withTransaction } from "@/lib/db";
-import { getSettings, getBookingRules, isWithinOpeningHours } from "@/lib/restaurant";
+import { getSettings, getBookingRules, isWithinOpeningHours, windowsForDate } from "@/lib/restaurant";
+import { getDailySlots } from "@/lib/floors";
 
 export class TakeawayError extends Error {
   constructor(message, code = "takeaway_failed") {
@@ -66,6 +67,62 @@ export async function quoteTakeaway(restaurantId, lines) {
   const totalCents = subtotalCents + serviceChargeCents;
 
   return { items, subtotalCents, serviceChargePct: SERVICE_CHARGE_PCT, serviceChargeCents, totalCents };
+}
+
+function hhmmToMinutes(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+function minutesToHhmm(total) {
+  return `${String(Math.floor(total / 60) % 24).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/**
+ * The fixed pickup times still bookable today: aligned to the takeaway slot interval (so
+ * 7:00, 7:30, 8:00 -- never 7:12), no earlier than the prep buffer from right now, and inside
+ * today's opening windows. Pass a slot ("morning" | "midday" | "evening") to narrow it to that
+ * shift's serving window. Shared by the staff New Takeaway form and the voice agent so the two
+ * can never offer different times.
+ */
+export async function listPickupOptions(restaurantId, { slot } = {}) {
+  const settings = await getSettings(restaurantId);
+  const rules = await getBookingRules(restaurantId);
+  const interval = rules?.takeaway_slot_interval_minutes ?? 30;
+  const prepBuffer = rules?.takeaway_prep_buffer_minutes ?? 30;
+  const today = new Date().toISOString().slice(0, 10);
+  const openWindows = windowsForDate(settings, today) || [];
+
+  const now = new Date();
+  const earliestMinutes = now.getHours() * 60 + now.getMinutes() + prepBuffer;
+
+  let shiftBounds = null;
+  if (slot) {
+    const slots = await getDailySlots(restaurantId);
+    const match = slots.find((s) => s.slot === slot);
+    if (match) {
+      shiftBounds = {
+        start: hhmmToMinutes(String(match.start_time).slice(0, 5)),
+        end: hhmmToMinutes(String(match.end_time).slice(0, 5))
+      };
+    }
+  }
+
+  const options = [];
+  for (const w of openWindows) {
+    let lo = Math.max(hhmmToMinutes(w.open), earliestMinutes);
+    let hi = hhmmToMinutes(w.close);
+    if (shiftBounds) { lo = Math.max(lo, shiftBounds.start); hi = Math.min(hi, shiftBounds.end); }
+    for (let t = Math.ceil(lo / interval) * interval; t <= hi; t += interval) options.push(minutesToHhmm(t));
+  }
+
+  return {
+    date: today,
+    slot: slot || null,
+    intervalMinutes: interval,
+    prepBufferMinutes: prepBuffer,
+    windows: openWindows,
+    options
+  };
 }
 
 /** Validates a requested pickup time: must round cleanly onto the restaurant's takeaway slot

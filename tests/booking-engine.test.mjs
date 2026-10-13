@@ -82,10 +82,21 @@ async function run() {
     assert.equal(rebooked.status, "confirmed");
   });
 
-  await test("large party over the auto-confirm threshold becomes a pending group request", async () => {
+  // The house rule is "anything below 10 books itself, 10 and over goes to staff" -- these two
+  // tests pin both sides of that boundary (booking_rules.large_group_threshold = 10).
+  await test("a party of 9 still auto-confirms, splitting across tables if it has to", async () => {
+    const result = await createReservation({
+      restaurantId: RESTAURANT_ID, customerName: `${MARKER} NineTop`, phone: "9000000019",
+      partySize: 9, reservationDate: "2027-01-13", startTime: "20:00", seatingPreference: "split_ok"
+    });
+    assert.equal(result.status, "confirmed");
+    assert.equal(result.reservation.party_size, 9);
+  });
+
+  await test("a party of 10 or more becomes a pending group request", async () => {
     const result = await createReservation({
       restaurantId: RESTAURANT_ID, customerName: `${MARKER} LargeGroup`, phone: "9000000020",
-      partySize: 9, reservationDate: "2027-01-13", startTime: "20:00", seatingPreference: "together"
+      partySize: 12, reservationDate: "2027-01-13", startTime: "20:00", seatingPreference: "together"
     });
     assert.equal(result.status, "pending");
     assert.ok(result.groupRequest);

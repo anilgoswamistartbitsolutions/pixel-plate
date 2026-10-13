@@ -67,7 +67,11 @@ export async function assignConfigurationToDates(restaurantId, configurationId, 
   });
 }
 
+/** Reverts a date to the default menu by removing its per-slot setup. Clears menu_slot_schedule
+ * (what the app actually writes) as well as the legacy whole-day menu_daily_schedule row, since
+ * clearing only the legacy table silently left the real per-slot rows in place. */
 export async function clearScheduleForDate(restaurantId, date) {
+  await query("delete from menu_slot_schedule where restaurant_id = $1 and schedule_date = $2", [restaurantId, date]);
   await query("delete from menu_daily_schedule where restaurant_id = $1 and schedule_date = $2", [restaurantId, date]);
 }
 

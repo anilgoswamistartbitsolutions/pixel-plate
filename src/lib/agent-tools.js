@@ -7,7 +7,7 @@ import { createFollowup } from "@/lib/calls";
 import { getBookingRules } from "@/lib/restaurant";
 import { getDailySlots, slotForTime } from "@/lib/floors";
 import { getMenuForDate, getMenuForDateSlot } from "@/lib/menu-config";
-import { createTakeawayOrder, quoteTakeaway, modifyTakeawayOrder, getTakeawayStatus, updateTakeawayStatus, TakeawayError } from "@/lib/takeaway";
+import { createTakeawayOrder, quoteTakeaway, modifyTakeawayOrder, getTakeawayStatus, updateTakeawayStatus, listPickupOptions, TakeawayError } from "@/lib/takeaway";
 import { query } from "@/lib/db";
 
 /**
@@ -82,12 +82,53 @@ export const TOOLS = {
     return { found: true, ...formatMenuItem(item) };
   },
 
+  // Callers ask "do you have outdoor seating?" or "what's the rooftop like?" -- they never want
+  // a list of 56 table codes. This answers at the room level, using each floor's description.
   async get_seating_options({ restaurantId }) {
     const result = await query(
-      "select code, display_name, capacity, table_type, shareable from restaurant_tables where restaurant_id = $1 and active = true order by code",
+      `select f.name, f.description,
+              count(t.id) filter (where t.active) as table_count,
+              coalesce(sum(t.capacity) filter (where t.active), 0) as seat_count,
+              max(t.capacity) filter (where t.active) as largest_table,
+              bool_or(t.shareable) filter (where t.active) as has_shareable
+       from floors f
+       left join restaurant_tables t on t.floor_id = f.id
+       where f.restaurant_id = $1 and f.active = true
+       group by f.id, f.name, f.description, f.sort_order
+       order by f.sort_order`,
       [restaurantId]
     );
-    return result.rows;
+    const rooms = result.rows
+      .filter((r) => Number(r.table_count) > 0)
+      .map((r) => ({
+        room: r.name,
+        description: r.description,
+        tables: Number(r.table_count),
+        seats: Number(r.seat_count),
+        largest_table_seats: r.largest_table ? Number(r.largest_table) : null,
+        shared_seating_available: !!r.has_shareable
+      }));
+    return {
+      rooms,
+      total_tables: rooms.reduce((s, r) => s + r.tables, 0),
+      total_seats: rooms.reduce((s, r) => s + r.seats, 0),
+      largest_single_table_seats: rooms.reduce((m, r) => Math.max(m, r.largest_table_seats || 0), 0)
+    };
+  },
+
+  // Takeout pickup is only offered on fixed slots (7:00, 7:30, ...), never a free-form time:
+  // the kitchen needs the prep buffer and the restaurant has to be open. Call this before
+  // promising any pickup time, and read back only times this returns.
+  async get_takeaway_pickup_times({ restaurantId, slot }) {
+    const result = await listPickupOptions(restaurantId, { slot: slot || undefined });
+    return {
+      date: result.date,
+      slot: result.slot,
+      slot_interval_minutes: result.intervalMinutes,
+      minimum_notice_minutes: result.prepBufferMinutes,
+      available_times: result.options,
+      none_left_today: result.options.length === 0
+    };
   },
 
   async check_table_availability({ restaurantId, date, time, partySize, preference }) {
