@@ -63,8 +63,39 @@ async function loadCombinations(client, restaurantId) {
  * preference: 'together' (default -- everyone at one table/combo), 'split_ok' (several
  * nearby tables acceptable), or 'shared_ok' (willing to share a table with strangers).
  */
-export async function planAllocation({ client, restaurantId, startAt, endAt, partySize, preference = "together", preferredTableId = null, preferredTableIds = null }) {
+export async function planAllocation({ client, restaurantId, startAt, endAt, partySize, preference = "together", preferredTableId = null, preferredTableIds = null, tableSeatCounts = null }) {
   const tables = await loadTablesWithFreeSeats(client, restaurantId, startAt, endAt);
+
+  // Staff explicitly specified how many guests sit at each table ("3 on table A, 3 on table
+  // B") -- honor that exact split rather than letting the engine decide which free seats to
+  // use on each table. The counts must sum to exactly partySize (never more, never less) and
+  // each table must have at least that many free seats.
+  if (tableSeatCounts && Object.keys(tableSeatCounts).length > 0) {
+    const entries = Object.entries(tableSeatCounts).filter(([, count]) => count > 0);
+    const sum = entries.reduce((total, [, count]) => total + count, 0);
+    if (sum !== partySize) {
+      return { ok: false, reason: `Seat counts must add up to exactly ${partySize} guests (currently ${sum}).` };
+    }
+    const chosen = entries.map(([tableId, count]) => ({ table: tables.find((t) => String(t.id) === String(tableId)), count }));
+    if (chosen.some(({ table }) => !table)) {
+      return { ok: false, reason: "One of the selected tables is no longer available." };
+    }
+    const shortfall = chosen.find(({ table, count }) => table.freeSeats.length < count);
+    if (shortfall) {
+      return { ok: false, reason: `${shortfall.table.display_name} only has ${shortfall.table.freeSeats.length} free seat(s), not ${shortfall.count}.` };
+    }
+    const seatIds = chosen.flatMap(({ table, count }) => table.freeSeats.slice(0, count).map((s) => s.id));
+    const tableIds = chosen.map(({ table }) => table.id);
+    const fullTableAny = chosen.some(({ table, count }) => count === table.seats.length);
+    return {
+      ok: true,
+      seatingMode: tableIds.length > 1 ? "combined" : (chosen[0].count === chosen[0].table.seats.length ? "full_table" : "partial"),
+      tableIds,
+      seatIds,
+      requiresApproval: tableIds.length > 1 || fullTableAny,
+      summary: chosen.map(({ table, count }) => `${table.display_name}: ${count} guest${count === 1 ? "" : "s"}`).join(" / ")
+    };
+  }
 
   // Guest (or staff) explicitly picked several tables to sit at together ("the patio tables")
   // -- honor the exact set if every one of them is still fully free, rather than silently

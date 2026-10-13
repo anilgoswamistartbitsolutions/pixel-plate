@@ -33,7 +33,8 @@ export async function POST(request) {
       source: "staff",
       createdByStaffId: auth.sub,
       preferredTableId: body.preferredTableId || null,
-      preferredTableIds: body.preferredTableIds || null
+      preferredTableIds: body.preferredTableIds || null,
+      tableSeatCounts: body.tableSeatCounts || null
     });
     return created(result);
   } catch (error) {

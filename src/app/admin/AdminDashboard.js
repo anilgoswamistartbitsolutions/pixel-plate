@@ -810,23 +810,31 @@ function EditReservationModal({ reservation, onClose, onSaved }) {
 
 function AddReservationModal({ defaultDate, onClose, onSaved }) {
   const [form, setForm] = useState({ customerName: "", phone: "", partySize: 2, reservationDate: defaultDate, startTime: "19:00", seatingPreference: "together", notes: "" });
-  const [tableIds, setTableIds] = useState([]);
+  // tableCounts: { [tableId]: guestsAtThatTable } -- explicit per-table split ("3 on table A,
+  // 3 on table B"), not just which tables to use.
+  const [tableCounts, setTableCounts] = useState({});
   const [options, setOptions] = useState(null);
   const [checking, setChecking] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const activeSlot = TIME_SLOTS.find((s) => s.times.includes(form.startTime))?.label;
+  const assignedTotal = Object.values(tableCounts).reduce((sum, n) => sum + (Number(n) || 0), 0);
+  const anyAssigned = Object.values(tableCounts).some((n) => Number(n) > 0);
+  const splitValid = !anyAssigned || assignedTotal === form.partySize;
 
-  function toggleTable(id) {
-    setTableIds((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
+  function setTableCount(optionId, maxFree, rawValue) {
+    const otherTotal = Object.entries(tableCounts).reduce((sum, [id, n]) => (id === String(optionId) ? sum : sum + (Number(n) || 0)), 0);
+    const remaining = Math.max(0, form.partySize - otherTotal);
+    const clamped = Math.max(0, Math.min(Number(rawValue) || 0, maxFree, remaining));
+    setTableCounts((prev) => ({ ...prev, [optionId]: clamped }));
   }
 
   async function checkAvailability() {
     setChecking(true);
     setError("");
     setOptions(null);
-    setTableIds([]);
+    setTableCounts({});
     try {
       const qs = new URLSearchParams({ date: form.reservationDate, time: form.startTime, partySize: String(form.partySize) });
       const result = await apiFetch(`/api/availability?${qs}`);
@@ -840,10 +848,17 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
 
   async function submit(e) {
     e.preventDefault();
+    if (!splitValid) {
+      setError(`Table split must add up to exactly ${form.partySize} guests (currently ${assignedTotal}).`);
+      return;
+    }
     setSaving(true);
     setError("");
     try {
-      const outcome = await apiFetch("/api/reservations", { method: "POST", body: JSON.stringify({ ...form, preferredTableIds: tableIds.length ? tableIds : null }) });
+      const tableSeatCounts = anyAssigned
+        ? Object.fromEntries(Object.entries(tableCounts).filter(([, n]) => Number(n) > 0))
+        : null;
+      const outcome = await apiFetch("/api/reservations", { method: "POST", body: JSON.stringify({ ...form, tableSeatCounts }) });
       onSaved(outcome);
     } catch (err) {
       setError(err.message);
@@ -899,27 +914,37 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
               ) : (
                 <>
                   <label>
-                    {options.length} table{options.length === 1 ? "" : "s"} available -- select one or more
-                    (optional, we&rsquo;ll choose the best fit otherwise; selecting several seats the party across
-                    those exact tables together)
+                    {options.length} table{options.length === 1 ? "" : "s"} available -- optionally set how many guests sit at
+                    each (e.g. 3 on one table, 3 on another). Leave all at 0 to let us pick the best fit.
                   </label>
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
-                    {options.map((o) => (
-                      <label key={o.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: `1px solid ${tableIds.includes(o.id) ? "var(--brand)" : "var(--line)"}`, borderRadius: "var(--radius-sm)", background: tableIds.includes(o.id) ? "var(--brand-soft)" : "#fff", cursor: "pointer" }}>
-                        <input type="checkbox" checked={tableIds.includes(o.id)} onChange={() => toggleTable(o.id)} />
-                        <span style={{ fontSize: 13.5, fontWeight: 600 }}>{o.displayName}</span>
-                        <span className="cardHint">{o.capacity} seats &middot; {o.freeSeatCount} free{o.fullTable ? " &middot; full table" : ""}</span>
-                      </label>
-                    ))}
+                    {options.map((o) => {
+                      const count = tableCounts[o.id] || 0;
+                      return (
+                        <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: `1px solid ${count > 0 ? "var(--brand)" : "var(--line)"}`, borderRadius: "var(--radius-sm)", background: count > 0 ? "var(--brand-soft)" : "#fff" }}>
+                          <div style={{ flex: 1 }}>
+                            <span style={{ fontSize: 13.5, fontWeight: 600 }}>{o.displayName}</span>
+                            <div className="cardHint">{o.capacity} seats &middot; {o.freeSeatCount} free{o.fullTable ? " &middot; full table" : ""}</div>
+                          </div>
+                          <input
+                            type="number" min="0" max={Math.min(o.freeSeatCount, form.partySize)} value={count}
+                            onChange={(e) => setTableCount(o.id, o.freeSeatCount, e.target.value)}
+                            className="textInput" style={{ width: 64, textAlign: "center", padding: "6px 4px" }}
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
-                  {tableIds.length > 1 && <div className="cardHint" style={{ marginTop: 6 }}>Multiple tables selected -- this will need staff approval as a combined-table booking.</div>}
+                  <div className="cardHint" style={{ marginTop: 8, color: anyAssigned && !splitValid ? "var(--danger)" : undefined }}>
+                    {assignedTotal} of {form.partySize} guests assigned{anyAssigned && !splitValid ? " -- must match exactly before booking" : ""}
+                  </div>
                 </>
               )}
             </div>
           )}
 
           <div className="field" style={{ gridColumn: "1 / -1" }}><label>Notes</label><textarea className="textarea" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
-          <button className="button primary" type="submit" disabled={saving} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Booking..." : "Check & book"}</button>
+          <button className="button primary" type="submit" disabled={saving || !splitValid} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Booking..." : "Check & book"}</button>
         </form>
       </div>
     </div>
