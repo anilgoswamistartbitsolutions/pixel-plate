@@ -1,7 +1,7 @@
 import { query, withTransaction } from "@/lib/db";
 import { getSettings, getBookingRules, isWithinOpeningHours, windowsForDate } from "@/lib/restaurant";
 import { getDailySlots } from "@/lib/floors";
-import { normalizePhone, phonesMatch } from "@/lib/phone";
+import { normalizePhone, phonesMatch, phoneDigits } from "@/lib/phone";
 
 export class TakeawayError extends Error {
   constructor(message, code = "takeaway_failed") {
@@ -222,6 +222,24 @@ export async function getTakeawayStatus({ restaurantId, orderRef, phone }) {
     return { verificationFailed: true };
   }
   return order;
+}
+
+/** The takeaway twin of findReservationsByPhone -- "where's my order?" with no order ref.
+ * Today's still-open orders only; a taken or cancelled order is not what the caller means. */
+export async function findTakeawayOrdersByPhone({ restaurantId, phone, limit = 5 }) {
+  const digits = phoneDigits(phone);
+  if (digits.length < 6) return [];
+  const result = await query(
+    `select * from takeaway_orders
+      where restaurant_id = $1
+        and status in ('pending','preparing','prepared_paid')
+        and (created_at at time zone 'utc')::date = (now() at time zone 'utc')::date
+        and right(regexp_replace(phone, '\\D', '', 'g'), 10) = right($2, 10)
+      order by requested_time
+      limit $3`,
+    [restaurantId, digits, limit]
+  );
+  return result.rows;
 }
 
 const VALID_STATUSES = ["pending", "preparing", "prepared_paid", "taken", "no_pickup", "cancelled", "other"];

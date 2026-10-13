@@ -1,7 +1,7 @@
 import { withTransaction, query } from "@/lib/db";
 import { planAllocation, sweepExpiredHolds, toWindow } from "@/lib/availability";
 import { getSettings, getBookingRules, isWithinOpeningHours } from "@/lib/restaurant";
-import { normalizePhone, phonesMatch } from "@/lib/phone";
+import { normalizePhone, phonesMatch, phoneDigits } from "@/lib/phone";
 
 const EXCLUSION_VIOLATION = "23P01";
 
@@ -17,7 +17,12 @@ export class BookingError extends Error {
  * invalid date, which silently disabled the cancel/change deadline checks and made a
  * date-only or party-size-only modification fail outright. */
 function toIsoDate(value) {
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  // Local parts rather than toISOString() -- pg builds a `date` column's Date at LOCAL
+  // midnight, so toISOString() shifts it to the previous day anywhere behind UTC, which
+  // silently moved the deadline comparisons below onto the wrong day.
+  if (value instanceof Date) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+  }
   return String(value).slice(0, 10);
 }
 function toHhmm(value) {
@@ -262,6 +267,33 @@ export async function getReservationStatus({ restaurantId, bookingRef, phone }) 
     return { verificationFailed: true };
   }
   return reservation;
+}
+
+/**
+ * Find a caller's own live bookings from their phone number alone -- the "what's my booking?"
+ * lookup, where the guest has no reference number to hand. This is not a weakening of the
+ * verification gate in getReservationStatus: there the phone proves the caller owns a
+ * reference someone could have guessed, whereas here the phone IS the only key, so it can
+ * only ever return the bookings already filed against that number.
+ *
+ * Only upcoming, still-live bookings -- a cancelled or long-past booking is not what someone
+ * asking "is my table still booked?" means, and listing it invites the agent to read it back
+ * as if it were active.
+ */
+export async function findReservationsByPhone({ restaurantId, phone, limit = 5 }) {
+  const digits = phoneDigits(phone);
+  if (digits.length < 6) return [];
+  const result = await query(
+    `select * from reservations
+      where restaurant_id = $1
+        and status in ('confirmed','seated')
+        and reservation_date >= (now() at time zone 'utc')::date
+        and right(regexp_replace(phone, '\\D', '', 'g'), 10) = right($2, 10)
+      order by reservation_date, start_time
+      limit $3`,
+    [restaurantId, digits, limit]
+  );
+  return result.rows;
 }
 
 export async function listReservations({ restaurantId, date, dateFrom, dateTo, status, limit = 200 }) {

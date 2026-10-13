@@ -832,6 +832,15 @@ function ReservationsView({ notify }) {
             {date !== todayIso() && <button className="button ghost small" onClick={() => setDate(todayIso())}>Today</button>}
           </div>
         )}
+        <button className="button ghost small" onClick={() => {
+          setRangeMode(true);
+          setRangeFrom(todayIso());
+          const d = new Date(`${todayIso()}T00:00:00Z`);
+          d.setUTCDate(d.getUTCDate() + 6);
+          setRangeTo(d.toISOString().slice(0, 10));
+        }}>
+          Next 7 days
+        </button>
       </div>
 
       <div className="tabRow">
@@ -841,7 +850,9 @@ function ReservationsView({ notify }) {
       </div>
 
       {!list ? <LoadingBlock /> : list.length === 0 ? (
-        <EmptyState title="No reservations" hint="New bookings from the dashboard or the voice agent will show up here." />
+        <EmptyState title="No reservations" hint={rangeMode
+          ? "New bookings from the dashboard or the voice agent will show up here."
+          : `Nothing for ${date}. A caller can book any future date -- try "Next 7 days" above if you're expecting a booking you don't see here.`} />
       ) : (
         <div className="tableWrap">
           <table className="table">
@@ -873,7 +884,20 @@ function ReservationsView({ notify }) {
         </div>
       )}
 
-      {showAdd && <AddReservationModal defaultDate={date} onClose={() => setShowAdd(false)} onSaved={(outcome) => { setShowAdd(false); notify(outcome.status === "confirmed" ? `Confirmed: ${outcome.reservation.booking_ref}` : "Sent for staff review (pending)"); load(); }} />}
+      {showAdd && <AddReservationModal defaultDate={date} onClose={() => setShowAdd(false)} onSaved={(outcome) => {
+        setShowAdd(false);
+        if (outcome.status === "confirmed") {
+          notify(`Confirmed: ${outcome.reservation.booking_ref}`);
+          // A booking can land on any date -- jump the view to it instead of leaving staff
+          // staring at an empty list for whatever date happened to be open before.
+          const bookedDate = String(outcome.reservation.reservation_date).slice(0, 10);
+          if (!rangeMode && bookedDate !== date) setDate(bookedDate);
+          else load();
+        } else {
+          notify("Sent for staff review -- find it under Leads, not Reservations.");
+          load();
+        }
+      }} />}
       {editing && <EditReservationModal reservation={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); notify("Reservation updated"); load(); }} />}
     </div>
   );

@@ -1,13 +1,13 @@
-import { getRestaurant, getSettings, windowsForDate, listExtraInfo } from "@/lib/restaurant";
+import { getRestaurant, getSettings, windowsForDate, listExtraInfo, isWithinOpeningHours } from "@/lib/restaurant";
 import { getDailySpecials } from "@/lib/menu";
 import { checkAvailability, toWindow } from "@/lib/availability";
-import { createReservation, cancelReservation, modifyReservation, getReservationStatus, BookingError } from "@/lib/reservations";
+import { createReservation, cancelReservation, modifyReservation, getReservationStatus, findReservationsByPhone, BookingError } from "@/lib/reservations";
 import { createGroupRequest } from "@/lib/group-requests";
 import { createFollowup } from "@/lib/calls";
 import { getBookingRules } from "@/lib/restaurant";
 import { getDailySlots, slotForTime } from "@/lib/floors";
 import { getMenuForDate, getMenuForDateSlot } from "@/lib/menu-config";
-import { createTakeawayOrder, quoteTakeaway, modifyTakeawayOrder, getTakeawayStatus, updateTakeawayStatus, listPickupOptions, TakeawayError } from "@/lib/takeaway";
+import { createTakeawayOrder, quoteTakeaway, modifyTakeawayOrder, getTakeawayStatus, updateTakeawayStatus, listPickupOptions, findTakeawayOrdersByPhone, TakeawayError } from "@/lib/takeaway";
 import { query } from "@/lib/db";
 
 /**
@@ -17,6 +17,40 @@ import { query } from "@/lib/db";
  * This is also the exact surface wired up as webhook tools on the "Pixel Plate (Prod)"
  * agent (see scripts/configure-voice-agent and /api/agent-tools/*).
  */
+
+/** pg returns a `date` column as a Date and a `time` as "HH:MM:SS". Handing those straight to
+ * the agent gave it "2026-10-14T00:00:00.000Z" and "19:00:00" to read aloud, so every date and
+ * time leaving these tools goes through these two first. */
+function toIsoDate(value) {
+  if (value instanceof Date) {
+    // Local parts, not toISOString(): pg builds this Date at LOCAL midnight, so in any
+    // timezone behind or ahead of UTC toISOString() rolls it to the wrong calendar day --
+    // a booking for the 14th read back to the guest as the 13th. Reading the same local
+    // parts pg wrote recovers the intended date in every timezone, UTC included.
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+  }
+  return String(value).slice(0, 10);
+}
+function toHhmm(value) {
+  return String(value).slice(0, 5);
+}
+
+/** The latest start time on a date that still leaves a full sitting before closing -- the
+ * counter-offer the agent needs when a guest asks for a time too close to close. */
+function latestBookableTime(settings, isoDate, durationMinutes) {
+  const windows = settings ? windowsForDate(settings, isoDate) : null;
+  if (!windows || !windows.length) return null;
+  const latest = windows.reduce((best, w) => {
+    const [ch, cm] = String(w.close).split(":").map(Number);
+    const [oh, om] = String(w.open).split(":").map(Number);
+    const start = ch * 60 + cm - durationMinutes;
+    // A window shorter than one sitting cannot be booked at all, so it offers no candidate.
+    if (start < oh * 60 + om) return best;
+    return best === null || start > best ? start : best;
+  }, null);
+  if (latest === null) return null;
+  return `${String(Math.floor(latest / 60)).padStart(2, "0")}:${String(latest % 60).padStart(2, "0")}`;
+}
 
 export const TOOLS = {
   async get_restaurant_information({ restaurantId }) {
@@ -133,7 +167,31 @@ export const TOOLS = {
 
   async check_table_availability({ restaurantId, date, time, partySize, preference }) {
     const rules = await getBookingRules(restaurantId);
-    const { startAt, endAt } = toWindow(date, time, rules?.reservation_duration_minutes || 90);
+    const duration = rules?.reservation_duration_minutes || 90;
+
+    // Opening hours first, with the SAME duration createReservation will use. Without this the
+    // two tools disagreed: a 21:30 start has free seats, so availability said yes, but the
+    // booking needs the table until 23:00 and the kitchen closes at 22:30 -- so every such
+    // booking was offered to the guest and then refused at create time. Checking here means
+    // the agent only ever offers a time it can actually honour, and last_bookable_time gives
+    // it something concrete to counter-offer instead of just repeating the rejection.
+    const settings = await getSettings(restaurantId);
+    const hoursCheck = isWithinOpeningHours(settings, date, time, duration);
+    if (!hoursCheck.ok) {
+      const latest = latestBookableTime(settings, date, duration);
+      return {
+        available: false,
+        reason: hoursCheck.reason,
+        last_bookable_time: latest,
+        // Spelled out because "we close at 22:30" reads to a guest as "21:30 is fine" -- the
+        // table is held for the whole sitting, so the last start is a full sitting earlier.
+        reason_detail: latest
+          ? `A table is held for ${duration} minutes, so the latest booking on that date starts at ${latest}.`
+          : undefined
+      };
+    }
+
+    const { startAt, endAt } = toWindow(date, time, duration);
     const plan = await checkAvailability({ restaurantId, startAt, endAt, partySize, preference });
     return plan.ok
       ? {
@@ -163,9 +221,27 @@ export const TOOLS = {
           summary: result.plan.summary
         };
       }
-      return { confirmed: false, pending: true, reason: result.reason || "This needs staff review before it can be confirmed." };
+      // A pending result has already written a real lead row -- surface its id and the fact
+      // that it was recorded. Returning only "needs staff review" made the agent tell callers
+      // their request was noted while giving it nothing to read back, so a guest who asked
+      // "where is it then?" was told a request existed with no way to find it.
+      return {
+        confirmed: false,
+        pending: true,
+        request_recorded: !!result.groupRequest,
+        request_id: result.groupRequest?.id ? String(result.groupRequest.id) : undefined,
+        reason: result.reason || "This needs staff review before it can be confirmed."
+      };
     } catch (error) {
-      if (error instanceof BookingError) return { confirmed: false, error: error.message };
+      if (error instanceof BookingError) {
+        if (error.code === "closed") {
+          const settings = await getSettings(restaurantId);
+          const rules = await getBookingRules(restaurantId);
+          const latest = latestBookableTime(settings, date, rules?.reservation_duration_minutes || 90);
+          return { confirmed: false, error: error.message, last_bookable_time: latest };
+        }
+        return { confirmed: false, error: error.message };
+      }
       throw error;
     }
   },
@@ -186,15 +262,35 @@ export const TOOLS = {
   },
 
   async get_reservation_status({ restaurantId, bookingRef, phone }) {
+    // Callers rarely have their reference to hand -- most just say "check my booking". With no
+    // bookingRef the lookup ran as booking_ref = undefined, matched nothing, and the agent told
+    // the guest it had no record of them. Fall back to their own number instead.
+    if (!bookingRef) {
+      const mine = await findReservationsByPhone({ restaurantId, phone });
+      if (!mine.length) return { found: false };
+      return {
+        found: true,
+        verified: true,
+        match_count: mine.length,
+        bookings: mine.map((r) => ({
+          booking_ref: r.booking_ref,
+          status: r.status,
+          date: toIsoDate(r.reservation_date),
+          time: toHhmm(r.start_time),
+          party_size: r.party_size
+        }))
+      };
+    }
     const reservation = await getReservationStatus({ restaurantId, bookingRef, phone });
     if (!reservation) return { found: false };
     if (reservation.verificationFailed) return { found: true, verified: false };
     return {
       found: true,
       verified: true,
+      booking_ref: reservation.booking_ref,
       status: reservation.status,
-      date: reservation.reservation_date,
-      time: reservation.start_time,
+      date: toIsoDate(reservation.reservation_date),
+      time: toHhmm(reservation.start_time),
       party_size: reservation.party_size
     };
   },
@@ -316,10 +412,36 @@ export const TOOLS = {
   },
 
   async get_takeaway_status({ restaurantId, orderRef, phone }) {
+    // Same reasoning as get_reservation_status: "is my food ready?" almost never comes with
+    // an order reference, so the caller's own number has to be enough to find it.
+    if (!orderRef) {
+      const mine = await findTakeawayOrdersByPhone({ restaurantId, phone });
+      if (!mine.length) return { found: false };
+      return {
+        found: true,
+        verified: true,
+        match_count: mine.length,
+        orders: mine.map((o) => ({
+          order_ref: o.order_ref,
+          status: o.status,
+          payment_status: o.payment_status,
+          pickup_time: toHhmm(o.requested_time),
+          total: (o.total_cents / 100).toFixed(2)
+        }))
+      };
+    }
     const order = await getTakeawayStatus({ restaurantId, orderRef, phone });
     if (!order) return { found: false };
     if (order.verificationFailed) return { found: true, verified: false };
-    return { found: true, verified: true, status: order.status, payment_status: order.payment_status, total: (order.total_cents / 100).toFixed(2) };
+    return {
+      found: true,
+      verified: true,
+      order_ref: order.order_ref,
+      status: order.status,
+      payment_status: order.payment_status,
+      pickup_time: toHhmm(order.requested_time),
+      total: (order.total_cents / 100).toFixed(2)
+    };
   },
 
   async cancel_takeaway_order({ restaurantId, orderRef, phone }) {
