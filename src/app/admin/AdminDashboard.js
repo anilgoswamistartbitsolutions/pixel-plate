@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   LayoutGrid, Grid3x3, CalendarClock, Users2, UtensilsCrossed, Building2,
   Mic, PhoneCall, BarChart3, Settings, LogOut, Plus, X, Check, Ban,
-  MapPin, Clock, ShieldCheck, Sparkles
+  MapPin, Clock, ShieldCheck, Sparkles, ShoppingBag, Layers, CalendarDays
 } from "lucide-react";
 import { apiFetch, getStaff, clearSession } from "@/lib/api-client";
 import VoiceAgentWidget from "@/components/VoiceAgentWidget";
@@ -19,6 +19,7 @@ const NAV_ITEMS = [
   { key: "reservations", label: "Reservations", icon: CalendarClock },
   { key: "groups", label: "Group Booking Requests", icon: Users2 },
   { key: "menu", label: "Menu & Daily Specials", icon: UtensilsCrossed },
+  { key: "takeaway", label: "Take Away", icon: ShoppingBag },
   { key: "info", label: "Restaurant Information", icon: Building2 },
   { key: "voice", label: "AI Voice Agent", icon: Mic },
   { key: "calls", label: "Calls & Follow-ups", icon: PhoneCall },
@@ -102,6 +103,7 @@ export default function AdminDashboard() {
           {view === "reservations" && <ReservationsView date={date} notify={notify} />}
           {view === "groups" && <GroupRequestsView notify={notify} />}
           {view === "menu" && <MenuView notify={notify} />}
+          {view === "takeaway" && <TakeAwayView notify={notify} />}
           {view === "info" && <RestaurantInfoView notify={notify} />}
           {view === "voice" && <VoiceAgentView staff={staff} notify={notify} />}
           {view === "calls" && <CallsView notify={notify} />}
@@ -213,8 +215,11 @@ function StatCard({ label, value, customValue, foot, onClick }) {
 
 function FloorPlanView({ notify }) {
   const [tables, setTables] = useState(null);
+  const [floors, setFloors] = useState([]);
+  const [activeFloor, setActiveFloor] = useState("all");
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [showAddFloor, setShowAddFloor] = useState(false);
   const [editing, setEditing] = useState(null);
   const [err, setErr] = useState("");
 
@@ -223,6 +228,7 @@ function FloorPlanView({ notify }) {
       setTables(data);
       setSelected((prev) => (prev ? data.find((t) => t.id === prev.id) || null : null));
     }).catch((e) => setErr(e.message));
+    apiFetch("/api/floors").then(setFloors).catch(() => {});
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -252,8 +258,20 @@ function FloorPlanView({ notify }) {
           <h2>Floor plan</h2>
           <p>Drag tables to arrange the room -- position saves automatically. Click a table to see seats, reservations, and edit it.</p>
         </div>
-        <button className="button primary" onClick={() => setShowAdd(true)}><Plus size={15} />Add table</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="button secondary" onClick={() => setShowAddFloor(true)}><Layers size={15} />Add floor</button>
+          <button className="button primary" onClick={() => setShowAdd(true)}><Plus size={15} />Add table</button>
+        </div>
       </div>
+
+      {floors.length > 0 && (
+        <div className="tabRow">
+          <button className={`tabChip ${activeFloor === "all" ? "active" : ""}`} onClick={() => setActiveFloor("all")}>All floors</button>
+          {floors.map((f) => (
+            <button key={f.id} className={`tabChip ${activeFloor === f.id ? "active" : ""}`} onClick={() => setActiveFloor(f.id)}>{f.name}</button>
+          ))}
+        </div>
+      )}
 
       <div className="legendRow">
         <span><span className="legendDot" style={{ background: "#fff", border: "2px solid var(--line)" }} />Available</span>
@@ -262,15 +280,18 @@ function FloorPlanView({ notify }) {
         <span><span className="legendDot" style={{ background: "#eee7db", border: "2px solid var(--muted)" }} />Inactive</span>
       </div>
 
+      {(() => {
+        const visibleTables = activeFloor === "all" ? tables : tables.filter((t) => t.floor_id === activeFloor);
+        return (
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
         <div className="floorCanvasWrap" style={{ flex: "1 1 560px", minWidth: 320 }}>
           <div className="floorCanvas">
-            {tables.length === 0 && (
+            {visibleTables.length === 0 && (
               <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <EmptyState title="No tables yet" hint="Click Add table to place your first one on the floor plan." />
+                <EmptyState title="No tables on this floor" hint="Click Add table to place one here, or pick another floor above." />
               </div>
             )}
-            {tables.map((table) => (
+            {visibleTables.map((table) => (
               <DraggableTable key={table.id} table={table} selected={selected?.id === table.id} onSelect={() => setSelected(table)} onDrag={handleDrag} />
             ))}
           </div>
@@ -284,19 +305,23 @@ function FloorPlanView({ notify }) {
           )}
         </div>
       </div>
+        );
+      })()}
 
       <div style={{ marginTop: 24 }}>
         <div className="cardTitle" style={{ marginBottom: 10 }}>All tables</div>
         <div className="tableWrap">
           <table className="table">
-            <thead><tr><th>Code</th><th>Name</th><th>Capacity</th><th>Type</th><th>Shareable</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Code</th><th>Name</th><th>Floor</th><th>Capacity</th><th>Type</th><th>Size</th><th>Shareable</th><th>Status</th><th></th></tr></thead>
             <tbody>
               {tables.map((t) => (
                 <tr key={t.id}>
                   <td><strong>{t.code}</strong></td>
                   <td>{t.display_name}</td>
+                  <td>{floors.find((f) => f.id === t.floor_id)?.name || "--"}</td>
                   <td>{t.capacity}</td>
                   <td>{t.table_type}</td>
+                  <td>{t.size_label}</td>
                   <td>{t.shareable ? "Yes" : "No"}</td>
                   <td><span className={`badge ${t.active ? "active" : "inactive"}`}>{t.active ? "Active" : "Inactive"}</span></td>
                   <td style={{ display: "flex", gap: 6 }}>
@@ -310,8 +335,9 @@ function FloorPlanView({ notify }) {
         </div>
       </div>
 
-      {showAdd && <AddTableModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); notify("Table created"); load(); }} />}
-      {editing && <EditTableModal table={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); notify("Table updated"); load(); }} />}
+      {showAdd && <AddTableModal floors={floors} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); notify("Table created"); load(); }} />}
+      {editing && <EditTableModal table={editing} floors={floors} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); notify("Table updated"); load(); }} />}
+      {showAddFloor && <AddFloorModal onClose={() => setShowAddFloor(false)} onSaved={() => { setShowAddFloor(false); notify("Floor created"); load(); }} />}
     </div>
   );
 }
@@ -397,8 +423,10 @@ function TableDetail({ table, onToggleActive, onEdit, onClose }) {
   );
 }
 
-function AddTableModal({ onClose, onSaved }) {
-  const [form, setForm] = useState({ code: "", displayName: "", capacity: 4, tableType: "standard", shareable: false });
+const TABLE_SIZE_OPTIONS = [["small", "Small (2-top)"], ["medium", "Medium (4-top)"], ["large", "Large (6-top)"], ["xl", "XL / Private (8+)"]];
+
+function AddTableModal({ floors, onClose, onSaved }) {
+  const [form, setForm] = useState({ code: "", displayName: "", capacity: 4, tableType: "standard", sizeLabel: "medium", floorId: floors?.[0]?.id || "", shareable: false });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -425,9 +453,20 @@ function AddTableModal({ onClose, onSaved }) {
           <div className="field"><label>Permanent code (e.g. L)</label><input className="textInput" required value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} /></div>
           <div className="field"><label>Display name</label><input className="textInput" required value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} /></div>
           <div className="field"><label>Capacity</label><input className="textInput" type="number" min="1" required value={form.capacity} onChange={(e) => setForm({ ...form, capacity: Number(e.target.value) })} /></div>
+          <div className="field"><label>Floor</label>
+            <select className="select" value={form.floorId} onChange={(e) => setForm({ ...form, floorId: e.target.value })}>
+              <option value="">No floor assigned</option>
+              {floors?.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
+          </div>
           <div className="field"><label>Table type</label>
             <select className="select" value={form.tableType} onChange={(e) => setForm({ ...form, tableType: e.target.value })}>
               <option value="standard">Standard</option><option value="shared">Shared</option><option value="private">Private</option><option value="booth">Booth</option>
+            </select>
+          </div>
+          <div className="field"><label>Size</label>
+            <select className="select" value={form.sizeLabel} onChange={(e) => setForm({ ...form, sizeLabel: e.target.value })}>
+              {TABLE_SIZE_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </div>
           <div className="field" style={{ gridColumn: "1 / -1" }}>
@@ -442,9 +481,41 @@ function AddTableModal({ onClose, onSaved }) {
   );
 }
 
-function EditTableModal({ table, onClose, onSaved }) {
+function AddFloorModal({ onClose, onSaved }) {
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await apiFetch("/api/floors", { method: "POST", body: JSON.stringify({ name }) });
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalCard" onClick={(e) => e.stopPropagation()}>
+        <div className="modalHeader"><h3>Add floor</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        {error && <div className="loginError">{error}</div>}
+        <form onSubmit={submit} className="formGrid one">
+          <div className="field"><label>Floor name</label><input className="textInput" required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ocean View Patio" /></div>
+          <button className="button primary" type="submit" disabled={saving} style={{ justifyContent: "center" }}>{saving ? "Creating..." : "Create floor"}</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function EditTableModal({ table, floors, onClose, onSaved }) {
   const [form, setForm] = useState({
     displayName: table.display_name, capacity: table.capacity, tableType: table.table_type,
+    sizeLabel: table.size_label || "medium", floorId: table.floor_id || "",
     shareable: table.shareable, exclusiveOnly: table.exclusive_only, fullTableRequiresApproval: table.full_table_requires_approval
   });
   const [saving, setSaving] = useState(false);
@@ -479,6 +550,17 @@ function EditTableModal({ table, onClose, onSaved }) {
           <div className="field"><label>Table type</label>
             <select className="select" value={form.tableType} onChange={(e) => setForm({ ...form, tableType: e.target.value })}>
               <option value="standard">Standard</option><option value="shared">Shared</option><option value="private">Private</option><option value="booth">Booth</option>
+            </select>
+          </div>
+          <div className="field"><label>Floor</label>
+            <select className="select" value={form.floorId} onChange={(e) => setForm({ ...form, floorId: e.target.value })}>
+              <option value="">No floor assigned</option>
+              {floors?.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
+          </div>
+          <div className="field"><label>Size</label>
+            <select className="select" value={form.sizeLabel} onChange={(e) => setForm({ ...form, sizeLabel: e.target.value })}>
+              {TABLE_SIZE_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </div>
           <div className="field" style={{ gridColumn: "1 / -1" }}>
@@ -611,7 +693,7 @@ const TIME_SLOTS = [
 
 function AddReservationModal({ defaultDate, onClose, onSaved }) {
   const [form, setForm] = useState({ customerName: "", phone: "", partySize: 2, reservationDate: defaultDate, startTime: "19:00", seatingPreference: "together", notes: "" });
-  const [tableId, setTableId] = useState(null);
+  const [tableIds, setTableIds] = useState([]);
   const [options, setOptions] = useState(null);
   const [checking, setChecking] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -619,11 +701,15 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
 
   const activeSlot = TIME_SLOTS.find((s) => s.times.includes(form.startTime))?.label;
 
+  function toggleTable(id) {
+    setTableIds((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
+  }
+
   async function checkAvailability() {
     setChecking(true);
     setError("");
     setOptions(null);
-    setTableId(null);
+    setTableIds([]);
     try {
       const qs = new URLSearchParams({ date: form.reservationDate, time: form.startTime, partySize: String(form.partySize) });
       const result = await apiFetch(`/api/availability?${qs}`);
@@ -640,7 +726,7 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
     setSaving(true);
     setError("");
     try {
-      const outcome = await apiFetch("/api/reservations", { method: "POST", body: JSON.stringify({ ...form, preferredTableId: tableId }) });
+      const outcome = await apiFetch("/api/reservations", { method: "POST", body: JSON.stringify({ ...form, preferredTableIds: tableIds.length ? tableIds : null }) });
       onSaved(outcome);
     } catch (err) {
       setError(err.message);
@@ -695,16 +781,21 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
                 </div>
               ) : (
                 <>
-                  <label>{options.length} table{options.length === 1 ? "" : "s"} available -- pick one (optional, we&rsquo;ll choose the best fit otherwise)</label>
+                  <label>
+                    {options.length} table{options.length === 1 ? "" : "s"} available -- select one or more
+                    (optional, we&rsquo;ll choose the best fit otherwise; selecting several seats the party across
+                    those exact tables together)
+                  </label>
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
                     {options.map((o) => (
-                      <label key={o.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: `1px solid ${tableId === o.id ? "var(--brand)" : "var(--line)"}`, borderRadius: "var(--radius-sm)", background: tableId === o.id ? "var(--brand-soft)" : "#fff", cursor: "pointer" }}>
-                        <input type="radio" name="tableOption" checked={tableId === o.id} onChange={() => setTableId(o.id)} />
+                      <label key={o.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: `1px solid ${tableIds.includes(o.id) ? "var(--brand)" : "var(--line)"}`, borderRadius: "var(--radius-sm)", background: tableIds.includes(o.id) ? "var(--brand-soft)" : "#fff", cursor: "pointer" }}>
+                        <input type="checkbox" checked={tableIds.includes(o.id)} onChange={() => toggleTable(o.id)} />
                         <span style={{ fontSize: 13.5, fontWeight: 600 }}>{o.displayName}</span>
                         <span className="cardHint">{o.capacity} seats &middot; {o.freeSeatCount} free{o.fullTable ? " &middot; full table" : ""}</span>
                       </label>
                     ))}
                   </div>
+                  {tableIds.length > 1 && <div className="cardHint" style={{ marginTop: 6 }}>Multiple tables selected -- this will need staff approval as a combined-table booking.</div>}
                 </>
               )}
             </div>
@@ -782,6 +873,7 @@ function GroupRequestsView({ notify }) {
 /* ====================================================================== Menu */
 
 function MenuView({ notify }) {
+  const [tab, setTab] = useState("items");
   const [items, setItems] = useState(null);
   const [categories, setCategories] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
@@ -810,10 +902,19 @@ function MenuView({ notify }) {
     <div>
       <div className="sectionHeader">
         <div><h2>Menu &amp; daily specials</h2><p>What the voice agent is allowed to recommend -- nothing it isn't configured here.</p></div>
-        <button className="button primary" onClick={() => setShowAdd(true)}><Plus size={15} />Add item</button>
+        {tab === "items" && <button className="button primary" onClick={() => setShowAdd(true)}><Plus size={15} />Add item</button>}
       </div>
 
-      {byCategory.map((cat) => cat.items.length > 0 && (
+      <div className="tabRow">
+        <button className={`tabChip ${tab === "items" ? "active" : ""}`} onClick={() => setTab("items")}>Items</button>
+        <button className={`tabChip ${tab === "config" ? "active" : ""}`} onClick={() => setTab("config")}><Layers size={13} style={{ verticalAlign: "-2px", marginRight: 5 }} />Configurations</button>
+        <button className={`tabChip ${tab === "calendar" ? "active" : ""}`} onClick={() => setTab("calendar")}><CalendarDays size={13} style={{ verticalAlign: "-2px", marginRight: 5 }} />Calendar</button>
+      </div>
+
+      {tab === "config" && <MenuConfigurationsPanel items={items} notify={notify} />}
+      {tab === "calendar" && <MenuCalendarPanel notify={notify} />}
+
+      {tab === "items" && byCategory.map((cat) => cat.items.length > 0 && (
         <div key={cat.id} style={{ marginBottom: 22 }}>
           <div className="cardTitle" style={{ marginBottom: 10 }}>{cat.name}</div>
           <div className="grid cols-3">
@@ -821,7 +922,7 @@ function MenuView({ notify }) {
               <div key={item.id} className="card">
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
                   <strong>{item.name}</strong>
-                  <span>₹{(item.price_cents / 100).toFixed(0)}</span>
+                  <span>${(item.price_cents / 100).toFixed(2)}</span>
                 </div>
                 <p className="cardHint" style={{ margin: "6px 0 10px" }}>{item.description}</p>
                 <div className="pillRow" style={{ marginBottom: 10 }}>
@@ -842,10 +943,316 @@ function MenuView({ notify }) {
   );
 }
 
-function AddMenuItemModal({ categories, onClose, onSaved }) {
-  const [form, setForm] = useState({ name: "", description: "", priceCents: 0, categoryId: categories[0]?.id || "", dietaryTags: "", recommendTags: "" });
+function MenuConfigurationsPanel({ items, notify }) {
+  const [configs, setConfigs] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(() => {
+    apiFetch("/api/menu/configurations").then(setConfigs).catch((e) => setErr(e.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (err) return <ErrorBlock message={err} />;
+  if (!configs) return <LoadingBlock />;
+
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <p className="cardHint">
+          Build a named set of items once (e.g. &ldquo;Monday&rdquo;, &ldquo;Valentine&rsquo;s Special&rdquo;, &ldquo;Thanksgiving Special&rdquo;),
+          then assign it to any calendar date in the Calendar tab -- on that date, only this configuration&rsquo;s items are available.
+        </p>
+      </div>
+      <button className="button primary small" style={{ marginBottom: 16 }} onClick={() => setShowAdd(true)}><Plus size={14} />New configuration</button>
+
+      {configs.length === 0 ? (
+        <EmptyState title="No configurations yet" hint="Create one to build a reusable named menu you can assign to any date." />
+      ) : (
+        <div className="grid cols-3">
+          {configs.map((cfg) => (
+            <div key={cfg.id} className="card">
+              <strong>{cfg.name}</strong>
+              <p className="cardHint" style={{ margin: "6px 0 10px" }}>{cfg.description}</p>
+              <div className="cardHint" style={{ marginBottom: 10 }}>{cfg.item_ids.length} item{cfg.item_ids.length === 1 ? "" : "s"}</div>
+              <button className="button secondary small" onClick={() => setEditing(cfg)}>Edit items</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showAdd && <AddConfigurationModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); notify("Configuration created"); load(); }} />}
+      {editing && <EditConfigurationItemsModal config={editing} items={items} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); notify("Configuration updated"); load(); }} />}
+    </div>
+  );
+}
+
+function AddConfigurationModal({ onClose, onSaved }) {
+  const [form, setForm] = useState({ name: "", description: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await apiFetch("/api/menu/configurations", { method: "POST", body: JSON.stringify(form) });
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalCard" onClick={(e) => e.stopPropagation()}>
+        <div className="modalHeader"><h3>New configuration</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        {error && <div className="loginError">{error}</div>}
+        <form onSubmit={submit} className="formGrid one">
+          <div className="field"><label>Name</label><input className="textInput" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Thanksgiving Special" /></div>
+          <div className="field"><label>Description</label><textarea className="textarea" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
+          <button className="button primary" type="submit" disabled={saving} style={{ justifyContent: "center" }}>{saving ? "Creating..." : "Create"}</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function EditConfigurationItemsModal({ config, items, onClose, onSaved }) {
+  const [selected, setSelected] = useState(config.item_ids.map(String));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  function toggle(id) {
+    const key = String(id);
+    setSelected((prev) => (prev.includes(key) ? prev.filter((v) => v !== key) : [...prev, key]));
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await apiFetch(`/api/menu/configurations/${config.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ action: "set_items", itemIds: selected.map(Number) })
+      });
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalCard" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+        <div className="modalHeader"><h3>{config.name}: select items</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        {error && <div className="loginError">{error}</div>}
+        <div style={{ maxHeight: 360, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+          {items.map((item) => (
+            <label key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", border: "1px solid var(--line)", borderRadius: "var(--radius-sm)", cursor: "pointer" }}>
+              <input type="checkbox" checked={selected.includes(String(item.id))} onChange={() => toggle(item.id)} />
+              <span style={{ fontSize: 13.5, flex: 1 }}>{item.name}</span>
+              <span className="cardHint">${(item.price_cents / 100).toFixed(2)}</span>
+            </label>
+          ))}
+        </div>
+        <button className="button primary" onClick={submit} disabled={saving} style={{ width: "100%", justifyContent: "center" }}>{saving ? "Saving..." : `Save (${selected.length} selected)`}</button>
+      </div>
+    </div>
+  );
+}
+
+function MenuCalendarPanel({ notify }) {
+  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [schedule, setSchedule] = useState(null);
+  const [configs, setConfigs] = useState([]);
+  const [slots, setSlots] = useState([]);
+  const [selectedDate, setSelectedDate] = useState(null);
+
+  const from = `${month}-01`;
+  const to = new Date(new Date(`${from}T00:00:00Z`).getUTCFullYear(), new Date(`${from}T00:00:00Z`).getUTCMonth() + 1, 0).toISOString().slice(0, 10);
+
+  const load = useCallback(() => {
+    apiFetch(`/api/menu/schedule?from=${from}&to=${to}`).then(setSchedule).catch(() => setSchedule([]));
+    apiFetch("/api/menu/configurations").then(setConfigs).catch(() => {});
+    apiFetch("/api/menu/daily-slots").then(setSlots).catch(() => {});
+  }, [from, to]);
+  useEffect(() => { load(); }, [load]);
+
+  if (!schedule) return <LoadingBlock />;
+
+  const scheduleByDate = new Map(schedule.map((s) => [String(s.schedule_date).slice(0, 10), s]));
+  const [year, m] = month.split("-").map(Number);
+  const daysInMonth = new Date(year, m, 0).getDate();
+  const firstWeekday = new Date(Date.UTC(year, m - 1, 1)).getUTCDay();
+  const cells = [...Array(firstWeekday).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <button className="button secondary small" onClick={() => setMonth((m) => addMonths(m, -1))}>&larr; Prev</button>
+        <strong>{new Date(`${from}T00:00:00Z`).toLocaleDateString(undefined, { month: "long", year: "numeric" })}</strong>
+        <button className="button secondary small" onClick={() => setMonth((m) => addMonths(m, 1))}>Next &rarr;</button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6, marginBottom: 20 }}>
+        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+          <div key={d} style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>{d}</div>
+        ))}
+        {cells.map((day, i) => {
+          if (!day) return <div key={`blank-${i}`} />;
+          const iso = `${month}-${String(day).padStart(2, "0")}`;
+          const scheduled = scheduleByDate.get(iso);
+          return (
+            <button key={iso} onClick={() => setSelectedDate(iso)}
+              style={{
+                aspectRatio: "1", borderRadius: "var(--radius-sm)", border: `1px solid ${scheduled ? "var(--brand)" : "var(--line)"}`,
+                background: scheduled ? "var(--brand-soft)" : "#fff", cursor: "pointer", padding: 4,
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2
+              }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600 }}>{day}</span>
+              {scheduled && <span style={{ fontSize: 9, color: "var(--brand-dark)", textAlign: "center", lineHeight: 1.2 }}>{scheduled.configuration_name}</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="cardHint">Click any date to see its Morning / Mid-day / Evening availability and assign a saved configuration.</div>
+
+      {selectedDate && (
+        <DayScheduleModal
+          date={selectedDate} slots={slots} configs={configs} scheduled={scheduleByDate.get(selectedDate)}
+          onClose={() => setSelectedDate(null)}
+          onChanged={() => { load(); notify("Schedule updated"); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function addMonths(yyyyMm, delta) {
+  const [y, m] = yyyyMm.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function DayScheduleModal({ date, slots, configs, scheduled, onClose, onChanged }) {
+  const [menu, setMenu] = useState(null);
+  const [assigning, setAssigning] = useState(false);
+  const [configId, setConfigId] = useState(scheduled?.configuration_id || "");
+
+  useEffect(() => {
+    apiFetch(`/api/menu/schedule?date=${date}`).then(setMenu).catch(() => setMenu({ items: [] }));
+  }, [date]);
+
+  const bySlot = { morning: [], midday: [], evening: [] };
+  (menu?.items || []).forEach((item) => {
+    (item.meal_periods || []).forEach((p) => { if (bySlot[p]) bySlot[p].push(item); });
+  });
+
+  async function assign() {
+    if (!configId) return;
+    setAssigning(true);
+    try {
+      await apiFetch(`/api/menu/configurations/${configId}`, { method: "PATCH", body: JSON.stringify({ action: "assign_dates", dates: [date] }) });
+      onChanged();
+      onClose();
+    } catch (e) {
+      alert(e.message);
+    } finally { setAssigning(false); }
+  }
+
+  async function clearDay() {
+    await fetch(`/api/menu/schedule?date=${date}`, { method: "DELETE", headers: { Authorization: `Bearer ${localStorage.getItem("pp_token")}` } });
+    onChanged();
+    onClose();
+  }
+
+  const slotLabels = { morning: "Morning", midday: "Mid-day", evening: "Evening" };
+  const slotTimes = Object.fromEntries(slots.map((s) => [s.slot, `${s.start_time?.slice(0, 5)}-${s.end_time?.slice(0, 5)}`]));
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalCard" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+        <div className="modalHeader">
+          <h3>{new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</h3>
+          <button className="button ghost small" onClick={onClose}><X size={14} /></button>
+        </div>
+
+        <div className="cardHint" style={{ marginBottom: 14 }}>
+          {menu?.source === "configuration" ? "Showing the assigned configuration's items." : "No configuration assigned -- showing the default menu."}
+        </div>
+
+        {!menu ? <LoadingBlock /> : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 18 }}>
+            {["morning", "midday", "evening"].map((slot) => (
+              <div key={slot}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <strong style={{ fontSize: 13 }}>{slotLabels[slot]}</strong>
+                  <span className="cardHint">{slotTimes[slot]}</span>
+                </div>
+                {bySlot[slot].length === 0 ? (
+                  <p className="cardHint">Nothing available in this slot.</p>
+                ) : (
+                  <div className="pillRow">
+                    {bySlot[slot].map((item) => <span key={item.id} className="pill">{item.name}</span>)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="formGrid one">
+          <div className="field">
+            <label>Assign a configuration to this date</label>
+            <select className="select" value={configId} onChange={(e) => setConfigId(e.target.value)}>
+              <option value="">Select a configuration...</option>
+              {configs.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="button primary small" onClick={assign} disabled={!configId || assigning}>{assigning ? "Assigning..." : "Assign"}</button>
+            {scheduled && <button className="button ghost small" onClick={clearDay}>Remove assignment</button>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const DIETARY_TAG_OPTIONS = ["vegetarian", "vegan", "gluten_free", "dairy_free", "spicy", "fresh", "seasonal"];
+const RECOMMEND_TAG_OPTIONS = ["popular", "chef_pick", "fresh", "seasonal", "comfort_food", "spicy"];
+const SLOT_OPTIONS = [["morning", "Morning"], ["midday", "Mid-day"], ["evening", "Evening"]];
+
+function TagPicker({ options, selected, onToggle }) {
+  return (
+    <div className="pillRow">
+      {options.map((tag) => (
+        <button type="button" key={tag}
+          className={`button small ${selected.includes(tag) ? "primary" : "secondary"}`}
+          onClick={() => onToggle(tag)}>
+          {tag.replace("_", " ")}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AddMenuItemModal({ categories, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name: "", description: "", priceDollars: "", categoryId: categories[0]?.id || "",
+    dietaryTags: [], recommendTags: [], mealPeriods: ["midday", "evening"], complimentary: false
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  function toggle(field, value) {
+    setForm((f) => ({ ...f, [field]: f[field].includes(value) ? f[field].filter((v) => v !== value) : [...f[field], value] }));
+  }
 
   async function submit(e) {
     e.preventDefault();
@@ -855,10 +1262,14 @@ function AddMenuItemModal({ categories, onClose, onSaved }) {
       await apiFetch("/api/menu/items", {
         method: "POST",
         body: JSON.stringify({
-          ...form,
+          name: form.name,
+          description: form.description,
           categoryId: form.categoryId ? Number(form.categoryId) : null,
-          dietaryTags: form.dietaryTags.split(",").map((s) => s.trim()).filter(Boolean),
-          recommendTags: form.recommendTags.split(",").map((s) => s.trim()).filter(Boolean)
+          priceCents: Math.round(Number(form.priceDollars || 0) * 100),
+          dietaryTags: form.dietaryTags,
+          recommendTags: form.recommendTags,
+          mealPeriods: form.mealPeriods,
+          complimentary: form.complimentary
         })
       });
       onSaved();
@@ -880,8 +1291,30 @@ function AddMenuItemModal({ categories, onClose, onSaved }) {
             </select>
           </div>
           <div className="field" style={{ gridColumn: "1 / -1" }}><label>Description (spoken by the agent)</label><textarea className="textarea" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
-          <div className="field"><label>Price (in paise/cents)</label><input className="textInput" type="number" value={form.priceCents} onChange={(e) => setForm({ ...form, priceCents: Number(e.target.value) })} /></div>
-          <div className="field"><label>Dietary tags (comma separated)</label><input className="textInput" value={form.dietaryTags} onChange={(e) => setForm({ ...form, dietaryTags: e.target.value })} placeholder="vegetarian, vegan" /></div>
+          <div className="field"><label>Price (USD)</label>
+            <input className="textInput" type="number" min="0" step="0.01" placeholder="0.00" required value={form.priceDollars} onChange={(e) => setForm({ ...form, priceDollars: e.target.value })} />
+          </div>
+          <div className="field">
+            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={form.complimentary} onChange={(e) => setForm({ ...form, complimentary: e.target.checked })} /> Complimentary item
+            </label>
+          </div>
+          <div className="field" style={{ gridColumn: "1 / -1" }}>
+            <label>Available during</label>
+            <div className="pillRow">
+              {SLOT_OPTIONS.map(([k, l]) => (
+                <button type="button" key={k} className={`button small ${form.mealPeriods.includes(k) ? "primary" : "secondary"}`} onClick={() => toggle("mealPeriods", k)}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div className="field" style={{ gridColumn: "1 / -1" }}>
+            <label>Dietary tags</label>
+            <TagPicker options={DIETARY_TAG_OPTIONS} selected={form.dietaryTags} onToggle={(t) => toggle("dietaryTags", t)} />
+          </div>
+          <div className="field" style={{ gridColumn: "1 / -1" }}>
+            <label>Recommendation tags</label>
+            <TagPicker options={RECOMMEND_TAG_OPTIONS} selected={form.recommendTags} onToggle={(t) => toggle("recommendTags", t)} />
+          </div>
           <button className="button primary" type="submit" disabled={saving} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>{saving ? "Saving..." : "Save item"}</button>
         </form>
       </div>
@@ -1269,6 +1702,206 @@ function VoiceAgentConfigForm({ config, status, onSaved }) {
         <SwitchRow label="Telephony connected" hint="Only enable once a real phone number is wired up and tested end to end." checked={form.telephony_configured} onChange={(v) => setForm({ ...form, telephony_configured: v })} />
       </div>
       <button className="button primary" style={{ marginTop: 16 }} onClick={submit} disabled={saving}>{saving ? "Saving..." : "Save configuration"}</button>
+    </div>
+  );
+}
+
+/* ====================================================================== Take Away */
+
+const TAKEAWAY_STATUSES = ["pending", "preparing", "prepared_paid", "taken", "no_pickup", "cancelled", "other"];
+const TAKEAWAY_STATUS_LABELS = {
+  pending: "Pending", preparing: "Preparing", prepared_paid: "Prepared & Paid",
+  taken: "Taken", no_pickup: "No Pickup", cancelled: "Cancelled", other: "Other"
+};
+const TAKEAWAY_NEXT_STATUS = { pending: "preparing", preparing: "prepared_paid", prepared_paid: "taken" };
+
+function TakeAwayView({ notify }) {
+  const [orders, setOrders] = useState(null);
+  const [status, setStatus] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(() => {
+    const qs = status ? `?status=${status}` : "";
+    apiFetch(`/api/takeaway${qs}`).then(setOrders).catch((e) => setErr(e.message));
+  }, [status]);
+  useEffect(() => { load(); }, [load]);
+
+  async function advance(order) {
+    const next = TAKEAWAY_NEXT_STATUS[order.status];
+    if (!next) return;
+    try {
+      await apiFetch(`/api/takeaway/${order.id}`, { method: "PATCH", body: JSON.stringify({ status: next, paymentStatus: next === "prepared_paid" ? "paid" : undefined }) });
+      notify(`Marked ${TAKEAWAY_STATUS_LABELS[next]}`);
+      load();
+    } catch (e) { notify(e.message, "error"); }
+  }
+
+  async function setOther(order, newStatus) {
+    try {
+      await apiFetch(`/api/takeaway/${order.id}`, { method: "PATCH", body: JSON.stringify({ status: newStatus }) });
+      notify(`Marked ${TAKEAWAY_STATUS_LABELS[newStatus]}`);
+      load();
+    } catch (e) { notify(e.message, "error"); }
+  }
+
+  if (err) return <ErrorBlock message={err} />;
+
+  return (
+    <div>
+      <div className="sectionHeader">
+        <div><h2>Take away</h2><p>Pickup orders -- combos of menu items, paid at pickup, with a 5% service charge.</p></div>
+        <button className="button primary" onClick={() => setShowAdd(true)}><Plus size={15} />New takeaway order</button>
+      </div>
+
+      <div className="tabRow">
+        <button className={`tabChip ${status === "" ? "active" : ""}`} onClick={() => setStatus("")}>All</button>
+        {TAKEAWAY_STATUSES.map((s) => (
+          <button key={s} className={`tabChip ${status === s ? "active" : ""}`} onClick={() => setStatus(s)}>{TAKEAWAY_STATUS_LABELS[s]}</button>
+        ))}
+      </div>
+
+      {!orders ? <LoadingBlock /> : orders.length === 0 ? (
+        <EmptyState title="No takeaway orders" hint="Orders created here or by the voice agent will show up as cards you can move through pending → preparing → prepared & paid → taken." />
+      ) : (
+        <div className="grid cols-3">
+          {orders.map((order) => (
+            <div key={order.id} className="card">
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                <strong>{order.order_ref}</strong>
+                <span className={`badge ${order.status}`}>{TAKEAWAY_STATUS_LABELS[order.status]}</span>
+              </div>
+              <div className="cardHint">{order.customer_name} &middot; {order.phone}</div>
+              <div className="pillRow" style={{ margin: "10px 0" }}>
+                {order.items.map((item, i) => <span key={i} className="pill">{item.quantity}&times; {item.name}</span>)}
+              </div>
+              <div style={{ fontSize: 13.5, display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                <span className="cardHint">Total (incl. {order.service_charge_pct}% service)</span>
+                <strong>${(order.total_cents / 100).toFixed(2)}</strong>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {TAKEAWAY_NEXT_STATUS[order.status] && (
+                  <button className="button primary small" onClick={() => advance(order)}>
+                    Mark {TAKEAWAY_STATUS_LABELS[TAKEAWAY_NEXT_STATUS[order.status]]}
+                  </button>
+                )}
+                {!["taken", "cancelled", "no_pickup"].includes(order.status) && (
+                  <>
+                    <button className="button ghost small" onClick={() => setOther(order, "no_pickup")}>No pickup</button>
+                    <button className="button danger small" onClick={() => setOther(order, "cancelled")}>Cancel</button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showAdd && <NewTakeawayModal onClose={() => setShowAdd(false)} onSaved={(order) => { setShowAdd(false); notify(`Takeaway ${order.order_ref} created -- $${(order.total_cents / 100).toFixed(2)} total`); load(); }} />}
+    </div>
+  );
+}
+
+function NewTakeawayModal({ onClose, onSaved }) {
+  const [items, setItems] = useState([]);
+  const [lines, setLines] = useState([]);
+  const [form, setForm] = useState({ customerName: "", phone: "", requestedSlot: "midday", notes: "" });
+  const [quote, setQuote] = useState(null);
+  const [quoting, setQuoting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => { apiFetch("/api/menu/items").then(setItems).catch(() => {}); }, []);
+
+  function addLine(itemId) {
+    setLines((prev) => {
+      const existing = prev.find((l) => l.menuItemId === itemId);
+      if (existing) return prev.map((l) => (l.menuItemId === itemId ? { ...l, quantity: l.quantity + 1 } : l));
+      return [...prev, { menuItemId: itemId, quantity: 1 }];
+    });
+    setQuote(null);
+  }
+  function removeLine(itemId) {
+    setLines((prev) => prev.filter((l) => l.menuItemId !== itemId));
+    setQuote(null);
+  }
+
+  async function getQuote() {
+    setQuoting(true);
+    setError("");
+    try {
+      const result = await apiFetch("/api/takeaway", { method: "POST", body: JSON.stringify({ quoteOnly: true, lines }) });
+      setQuote(result);
+    } catch (e) { setError(e.message); } finally { setQuoting(false); }
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const result = await apiFetch("/api/takeaway", { method: "POST", body: JSON.stringify({ ...form, lines }) });
+      onSaved(result.order);
+    } catch (err) {
+      setError(err.message);
+    } finally { setSaving(false); }
+  }
+
+  const available = items.filter((i) => i.available && !i.sold_out);
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalCard" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+        <div className="modalHeader"><h3>New takeaway order</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        {error && <div className="loginError">{error}</div>}
+
+        <div className="field" style={{ marginBottom: 14 }}>
+          <label>Add items</label>
+          <select className="select" value="" onChange={(e) => e.target.value && addLine(Number(e.target.value))}>
+            <option value="">Select a menu item...</option>
+            {available.map((i) => <option key={i.id} value={i.id}>{i.name} -- ${(i.price_cents / 100).toFixed(2)}</option>)}
+          </select>
+        </div>
+
+        {lines.length > 0 && (
+          <div style={{ marginBottom: 14, display: "flex", flexDirection: "column", gap: 6 }}>
+            {lines.map((line) => {
+              const item = items.find((i) => i.id === line.menuItemId);
+              return (
+                <div key={line.menuItemId} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5 }}>
+                  <span>{line.quantity}&times; {item?.name}</span>
+                  <button type="button" className="button ghost small" onClick={() => removeLine(line.menuItemId)}><X size={13} /></button>
+                </div>
+              );
+            })}
+            <button type="button" className="button secondary small" onClick={getQuote} disabled={quoting} style={{ marginTop: 4 }}>
+              {quoting ? "Pricing..." : "Get quote"}
+            </button>
+            {quote && (
+              <div className="cardHint" style={{ background: "var(--line-soft)", padding: 10, borderRadius: 10 }}>
+                Subtotal ${(quote.subtotalCents / 100).toFixed(2)} + {quote.serviceChargePct}% service = <strong>${(quote.totalCents / 100).toFixed(2)} total</strong>
+              </div>
+            )}
+          </div>
+        )}
+
+        <form onSubmit={submit} className="formGrid">
+          <div className="field"><label>Customer name</label><input className="textInput" required value={form.customerName} onChange={(e) => setForm({ ...form, customerName: e.target.value })} /></div>
+          <div className="field"><label>Phone</label><input className="textInput" required value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
+          <div className="field" style={{ gridColumn: "1 / -1" }}>
+            <label>Pickup slot</label>
+            <div className="pillRow">
+              {SLOT_OPTIONS.map(([k, l]) => (
+                <button type="button" key={k} className={`button small ${form.requestedSlot === k ? "primary" : "secondary"}`} onClick={() => setForm({ ...form, requestedSlot: k })}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div className="field" style={{ gridColumn: "1 / -1" }}><label>Notes</label><textarea className="textarea" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
+          <button className="button primary" type="submit" disabled={saving || lines.length === 0} style={{ gridColumn: "1 / -1", justifyContent: "center" }}>
+            {saving ? "Creating..." : "Create takeaway order (pay at pickup)"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

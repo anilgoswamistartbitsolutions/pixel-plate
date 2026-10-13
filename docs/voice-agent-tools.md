@@ -31,8 +31,9 @@ allow-listed).
 |---|---|
 | `get_restaurant_information` | none (now also returns `extra_info`: active topic/detail rows from Restaurant Information > Extra Info) |
 | `get_opening_hours` | `date` (optional) |
-| `get_menu` | `mealPeriod` (enum: breakfast/lunch/dinner, optional), `categoryName` (optional) |
+| `get_menu` | `date` (optional, defaults today -- pulls the configuration assigned to that date if staff set one), `slot` (enum: morning/midday/evening, optional), `categoryName` (optional) |
 | `get_daily_specials` | none |
+| `get_daily_slots` | none -- returns the restaurant's morning/midday/evening time windows |
 | `get_menu_item_availability` | `itemName` |
 | `get_seating_options` | none |
 | `check_table_availability` | `date`, `time`, `partySize`, `preference` (enum: together/split_ok/shared_ok) |
@@ -41,8 +42,15 @@ allow-listed).
 | `get_reservation_status` | `bookingRef`, `phone` |
 | `modify_reservation` | `bookingRef`, `phone`, `date` (optional), `time` (optional), `partySize` (optional) |
 | `cancel_reservation` | `bookingRef`, `phone`, `reason` (optional) |
+| `quote_takeaway_order` | `items`: `[{name, quantity}]` -- prices against the live menu, returns subtotal + 5% service charge + total |
+| `create_takeaway_order` | `customerName`, `phone`, `items`, `slot` (optional), `time` (optional), `notes` (optional) -- only call after reading the quote back and getting explicit confirmation |
+| `modify_takeaway_order` | `orderRef`, `phone`, `items` -- only works while the order is still `pending` |
+| `get_takeaway_status` | `orderRef`, `phone` |
+| `cancel_takeaway_order` | `orderRef`, `phone` |
 | `create_staff_followup` | `title`, `notes` (optional), `reservationBookingRef` (optional) |
 | `request_human_handoff` | `reason` |
+
+`create_reservation` also accepts an internal `preferredTableIds` array (dashboard-only, for staff/guest-selected specific tables) -- the voice agent should not set this itself; it only applies seating preference text.
 
 Reference each one from the prompt as `call tool:<name>` (the current prompt already names all
 fourteen). Re-commit the agent (`agents(operation="commit")`) after adding them.

@@ -1,10 +1,13 @@
 import { getRestaurant, getSettings, openingWindowForDate, listExtraInfo } from "@/lib/restaurant";
-import { listMenu, getDailySpecials, recommendItems, currentMealPeriod } from "@/lib/menu";
+import { getDailySpecials } from "@/lib/menu";
 import { checkAvailability, toWindow } from "@/lib/availability";
 import { createReservation, cancelReservation, modifyReservation, getReservationStatus, BookingError } from "@/lib/reservations";
 import { createGroupRequest } from "@/lib/group-requests";
 import { createFollowup } from "@/lib/calls";
 import { getBookingRules } from "@/lib/restaurant";
+import { getDailySlots, slotForTime } from "@/lib/floors";
+import { getMenuForDate } from "@/lib/menu-config";
+import { createTakeawayOrder, quoteTakeaway, modifyTakeawayOrder, getTakeawayStatus, updateTakeawayStatus, TakeawayError } from "@/lib/takeaway";
 import { query } from "@/lib/db";
 
 /**
@@ -43,12 +46,22 @@ export const TOOLS = {
     return window ? { date: isoDate, open: window.open, close: window.close } : { date: isoDate, closed: true };
   },
 
-  async get_menu({ restaurantId, mealPeriod, categoryName }) {
-    const items = await listMenu({ restaurantId, mealPeriod: mealPeriod || currentMealPeriod() });
-    const filtered = categoryName
-      ? items.filter((i) => i.category_name?.toLowerCase() === categoryName.toLowerCase())
-      : items;
-    return filtered.map(formatMenuItem);
+  // slot: 'morning' | 'midday' | 'evening' (the restaurant's three daily serving windows --
+  // see Menu & Daily Specials > Daily Slots). date: defaults to today, and pulls whatever
+  // menu configuration staff assigned to that specific date (Monday special, Thanksgiving
+  // special, etc.) instead of the default menu, when one is assigned.
+  async get_menu({ restaurantId, date, slot, categoryName }) {
+    const isoDate = date || new Date().toISOString().slice(0, 10);
+    const { source, items } = await getMenuForDate(restaurantId, isoDate);
+    let filtered = items.filter((i) => i.available && !i.sold_out);
+    if (slot) filtered = filtered.filter((i) => (i.meal_periods || []).includes(slot));
+    if (categoryName) filtered = filtered.filter((i) => i.category_name?.toLowerCase() === categoryName.toLowerCase());
+    return { date: isoDate, menu_source: source, items: filtered.map(formatMenuItem) };
+  },
+
+  async get_daily_slots({ restaurantId }) {
+    const slots = await getDailySlots(restaurantId);
+    return slots.map((s) => ({ slot: s.slot, start: s.start_time.slice(0, 5), end: s.end_time.slice(0, 5) }));
   },
 
   async get_daily_specials({ restaurantId }) {
@@ -169,8 +182,93 @@ export const TOOLS = {
       restaurantId, callId, title: "Caller requested a human", notes: reason
     });
     return { escalated: true, followup_id: followup.id, message: "A staff member will follow up as soon as possible." };
+  },
+
+  // --- Takeaway -------------------------------------------------------------------------
+  // items: [{ name, quantity }] -- resolved against the live menu by name so the agent never
+  // has to know internal menu item IDs. Quoting is a separate step from creating: the agent
+  // must read back the total (including the 5% service charge) and get explicit confirmation
+  // before calling create_takeaway_order.
+  async quote_takeaway_order({ restaurantId, items }) {
+    try {
+      const lines = await resolveItemNames(restaurantId, items);
+      const quote = await quoteTakeaway(restaurantId, lines);
+      return {
+        ok: true,
+        items: quote.items.map((i) => ({ name: i.name, quantity: i.quantity, unit_price: (i.unitPriceCents / 100).toFixed(2) })),
+        subtotal: (quote.subtotalCents / 100).toFixed(2),
+        service_charge_pct: quote.serviceChargePct,
+        total: (quote.totalCents / 100).toFixed(2),
+        currency: "USD"
+      };
+    } catch (error) {
+      if (error instanceof TakeawayError) return { ok: false, error: error.message };
+      throw error;
+    }
+  },
+
+  async create_takeaway_order({ restaurantId, customerName, phone, items, slot, time, notes }) {
+    try {
+      const lines = await resolveItemNames(restaurantId, items);
+      const result = await createTakeawayOrder({
+        restaurantId, customerName, phone, lines, requestedSlot: slot, requestedTime: time, notes, source: "voice_agent"
+      });
+      return {
+        confirmed: true,
+        order_ref: result.order.order_ref,
+        total: (result.order.total_cents / 100).toFixed(2),
+        payment: "Pay at pickup",
+        status: result.order.status
+      };
+    } catch (error) {
+      if (error instanceof TakeawayError) return { confirmed: false, error: error.message };
+      throw error;
+    }
+  },
+
+  async modify_takeaway_order({ restaurantId, orderRef, phone, items }) {
+    const existing = await getTakeawayStatus({ restaurantId, orderRef, phone });
+    if (!existing || existing.verificationFailed) return { modified: false, error: "We could not verify this order." };
+    try {
+      const lines = await resolveItemNames(restaurantId, items);
+      const result = await modifyTakeawayOrder(restaurantId, existing.id, lines);
+      return { modified: true, total: (result.order.total_cents / 100).toFixed(2) };
+    } catch (error) {
+      if (error instanceof TakeawayError) return { modified: false, error: error.message, needs_staff: error.code === "needs_staff" };
+      throw error;
+    }
+  },
+
+  async get_takeaway_status({ restaurantId, orderRef, phone }) {
+    const order = await getTakeawayStatus({ restaurantId, orderRef, phone });
+    if (!order) return { found: false };
+    if (order.verificationFailed) return { found: true, verified: false };
+    return { found: true, verified: true, status: order.status, payment_status: order.payment_status, total: (order.total_cents / 100).toFixed(2) };
+  },
+
+  async cancel_takeaway_order({ restaurantId, orderRef, phone }) {
+    const existing = await getTakeawayStatus({ restaurantId, orderRef, phone });
+    if (!existing || existing.verificationFailed) return { cancelled: false, error: "We could not verify this order." };
+    if (existing.status !== "pending") return { cancelled: false, error: "This order is already being prepared -- ask staff to cancel it." };
+    await updateTakeawayStatus(restaurantId, existing.id, { status: "cancelled" });
+    return { cancelled: true };
   }
 };
+
+async function resolveItemNames(restaurantId, items) {
+  if (!items?.length) throw new TakeawayError("At least one item is required.", "validation");
+  const lines = [];
+  for (const line of items) {
+    const result = await query(
+      "select id, name from menu_items where restaurant_id = $1 and available = true and sold_out = false and name ilike $2 limit 1",
+      [restaurantId, `%${line.name}%`]
+    );
+    const item = result.rows[0];
+    if (!item) throw new TakeawayError(`We couldn't find "${line.name}" on the menu.`, "not_found");
+    lines.push({ menuItemId: item.id, quantity: line.quantity || 1 });
+  }
+  return lines;
+}
 
 function formatMenuItem(item) {
   return {

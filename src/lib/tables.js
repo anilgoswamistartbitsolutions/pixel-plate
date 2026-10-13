@@ -47,18 +47,28 @@ export async function listFloorPlan(restaurantId) {
   }));
 }
 
+const SIZE_DIMENSIONS = {
+  small: { width: 90, height: 90 },
+  medium: { width: 120, height: 90 },
+  large: { width: 160, height: 110 },
+  xl: { width: 220, height: 140 }
+};
+
 export async function createTable(restaurantId, payload) {
   return withTransaction(async (client) => {
+    const sizeLabel = payload.sizeLabel || "medium";
+    const dims = SIZE_DIMENSIONS[sizeLabel] || SIZE_DIMENSIONS.medium;
     const tableResult = await client.query(
       `insert into restaurant_tables
         (restaurant_id, code, display_name, capacity, table_type, shareable, shareable_party_sizes,
-         exclusive_only, full_table_requires_approval, pos_x, pos_y, width, height, shape)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning *`,
+         exclusive_only, full_table_requires_approval, pos_x, pos_y, width, height, shape, floor_id, size_label)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) returning *`,
       [
         restaurantId, payload.code, payload.displayName, payload.capacity, payload.tableType || "standard",
         payload.shareable || false, payload.shareablePartySizes || [], payload.exclusiveOnly || false,
         payload.fullTableRequiresApproval || false, payload.posX || 0, payload.posY || 0,
-        payload.width || 120, payload.height || 90, payload.shape || "rect"
+        payload.width || dims.width, payload.height || dims.height, payload.shape || "rect",
+        payload.floorId || null, sizeLabel
       ]
     );
     const table = tableResult.rows[0];
@@ -75,20 +85,22 @@ export async function createTable(restaurantId, payload) {
 export async function updateTable(restaurantId, tableId, payload) {
   const fields = [
     "display_name", "capacity", "table_type", "shareable", "shareable_party_sizes",
-    "exclusive_only", "full_table_requires_approval", "pos_x", "pos_y", "width", "height", "shape", "active"
+    "exclusive_only", "full_table_requires_approval", "pos_x", "pos_y", "width", "height", "shape", "active",
+    "floor_id", "size_label"
   ];
   const map = {
     display_name: "displayName", capacity: "capacity", table_type: "tableType", shareable: "shareable",
     shareable_party_sizes: "shareablePartySizes", exclusive_only: "exclusiveOnly",
     full_table_requires_approval: "fullTableRequiresApproval", pos_x: "posX", pos_y: "posY",
-    width: "width", height: "height", shape: "shape", active: "active"
+    width: "width", height: "height", shape: "shape", active: "active",
+    floor_id: "floorId", size_label: "sizeLabel"
   };
   const sets = [];
   const values = [tableId, restaurantId];
   for (const field of fields) {
     const key = map[field];
     if (!(key in payload)) continue;
-    values.push(payload[key]);
+    values.push(field === "floor_id" && payload[key] === "" ? null : payload[key]);
     sets.push(`${field} = $${values.length}`);
   }
   if (!sets.length) return null;

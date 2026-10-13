@@ -63,14 +63,34 @@ async function loadCombinations(client, restaurantId) {
  * preference: 'together' (default -- everyone at one table/combo), 'split_ok' (several
  * nearby tables acceptable), or 'shared_ok' (willing to share a table with strangers).
  */
-export async function planAllocation({ client, restaurantId, startAt, endAt, partySize, preference = "together", preferredTableId = null }) {
+export async function planAllocation({ client, restaurantId, startAt, endAt, partySize, preference = "together", preferredTableId = null, preferredTableIds = null }) {
   const tables = await loadTablesWithFreeSeats(client, restaurantId, startAt, endAt);
 
-  // Staff (or a guest who saw the options list) picked a specific table -- honor it if it
+  // Guest (or staff) explicitly picked several tables to sit at together ("the patio tables")
+  // -- honor the exact set if every one of them is still fully free, rather than silently
+  // substituting the engine's own pick.
+  if (preferredTableIds?.length > 1) {
+    const chosen = tables.filter((t) => preferredTableIds.map(String).includes(String(t.id)));
+    const freeSeats = chosen.flatMap((t) => t.freeSeats);
+    if (chosen.length === preferredTableIds.length && freeSeats.length >= partySize && chosen.every((t) => t.isFullyFree)) {
+      const seats = freeSeats.slice(0, partySize);
+      return {
+        ok: true,
+        seatingMode: "combined",
+        tableIds: chosen.map((t) => t.id),
+        seatIds: seats.map((s) => s.id),
+        requiresApproval: true,
+        summary: `${chosen.map((t) => t.display_name).join(" + ")}: seats ${seats.map((s) => s.code).join(", ")}`
+      };
+    }
+  }
+
+  // Staff (or a guest who saw the options list) picked one specific table -- honor it if it
   // genuinely still has enough free seats; otherwise fall through to the normal engine below
   // rather than failing outright, since availability can shift between the check and the book.
-  if (preferredTableId) {
-    const preferred = tables.find((t) => String(t.id) === String(preferredTableId));
+  const singlePreferredId = preferredTableId || (preferredTableIds?.length === 1 ? preferredTableIds[0] : null);
+  if (singlePreferredId) {
+    const preferred = tables.find((t) => String(t.id) === String(singlePreferredId));
     if (preferred && preferred.freeSeats.length >= partySize) {
       const seats = preferred.freeSeats.slice(0, partySize);
       const fullTable = seats.length === preferred.seats.length;

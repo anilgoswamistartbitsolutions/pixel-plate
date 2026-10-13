@@ -31,7 +31,8 @@ export async function createReservation({
   notes,
   source = "staff",
   createdByStaffId = null,
-  preferredTableId = null
+  preferredTableId = null,
+  preferredTableIds = null
 }) {
   if (!customerName?.trim()) throw new BookingError("Customer name is required.", "validation");
   if (!phone?.trim()) throw new BookingError("A contact phone number is required.", "validation");
@@ -50,7 +51,7 @@ export async function createReservation({
 
   return withTransaction(async (client) => {
     await sweepExpiredHolds(client, restaurantId);
-    const plan = await planAllocation({ client, restaurantId, startAt, endAt, partySize, preference: seatingPreference, preferredTableId });
+    const plan = await planAllocation({ client, restaurantId, startAt, endAt, partySize, preference: seatingPreference, preferredTableId, preferredTableIds });
 
     if (!plan.ok) {
       // No seats fit right now -- offer a pending group/staff-reviewed request instead of

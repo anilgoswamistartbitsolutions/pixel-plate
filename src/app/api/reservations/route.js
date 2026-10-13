@@ -32,7 +32,8 @@ export async function POST(request) {
       notes: body.notes,
       source: "staff",
       createdByStaffId: auth.sub,
-      preferredTableId: body.preferredTableId || null
+      preferredTableId: body.preferredTableId || null,
+      preferredTableIds: body.preferredTableIds || null
     });
     return created(result);
   } catch (error) {
