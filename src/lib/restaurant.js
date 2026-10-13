@@ -111,4 +111,33 @@ function toMinutes(hhmm) {
   return h * 60 + m;
 }
 
+export async function listExtraInfo(restaurantId, { onlyActive = false } = {}) {
+  const result = await query(
+    `select * from restaurant_extra_info where restaurant_id = $1 ${onlyActive ? "and active = true" : ""}
+     order by sort_order, created_at`,
+    [restaurantId]
+  );
+  return result.rows;
+}
+
+export async function upsertExtraInfo(restaurantId, item) {
+  if (item.id) {
+    const result = await query(
+      `update restaurant_extra_info set topic = $2, detail = $3, active = $4, sort_order = $5, updated_at = now()
+       where id = $1 and restaurant_id = $6 returning *`,
+      [item.id, item.topic, item.detail, item.active !== false, item.sortOrder || 0, restaurantId]
+    );
+    return result.rows[0];
+  }
+  const result = await query(
+    `insert into restaurant_extra_info (restaurant_id, topic, detail, sort_order) values ($1,$2,$3,$4) returning *`,
+    [restaurantId, item.topic, item.detail, item.sortOrder || 0]
+  );
+  return result.rows[0];
+}
+
+export async function deleteExtraInfo(restaurantId, id) {
+  await query("delete from restaurant_extra_info where id = $1 and restaurant_id = $2", [id, restaurantId]);
+}
+
 export { WEEKDAY_KEYS };

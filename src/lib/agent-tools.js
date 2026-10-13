@@ -1,4 +1,4 @@
-import { getRestaurant, getSettings, openingWindowForDate } from "@/lib/restaurant";
+import { getRestaurant, getSettings, openingWindowForDate, listExtraInfo } from "@/lib/restaurant";
 import { listMenu, getDailySpecials, recommendItems, currentMealPeriod } from "@/lib/menu";
 import { checkAvailability, toWindow } from "@/lib/availability";
 import { createReservation, cancelReservation, modifyReservation, getReservationStatus, BookingError } from "@/lib/reservations";
@@ -19,6 +19,7 @@ export const TOOLS = {
   async get_restaurant_information({ restaurantId }) {
     const restaurant = await getRestaurant(restaurantId);
     const settings = await getSettings(restaurantId);
+    const extraInfo = await listExtraInfo(restaurantId, { onlyActive: true });
     return {
       name: restaurant?.name,
       description: settings?.description,
@@ -28,7 +29,10 @@ export const TOOLS = {
       parking_info: settings?.parking_info,
       reservation_policy: settings?.reservation_policy,
       cancellation_policy: settings?.cancellation_policy,
-      supported_languages: settings?.supported_languages
+      supported_languages: settings?.supported_languages,
+      // Free-form topics staff added in Restaurant Information > Extra Info -- e.g. birthday
+      // policy, dress code, live music nights. Only rows marked active are ever returned.
+      extra_info: extraInfo.map((row) => ({ topic: row.topic, detail: row.detail }))
     };
   },
 

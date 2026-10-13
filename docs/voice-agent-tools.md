@@ -29,7 +29,7 @@ allow-listed).
 
 | Tool name | Body fields (all `llm_prompt` unless noted) |
 |---|---|
-| `get_restaurant_information` | none |
+| `get_restaurant_information` | none (now also returns `extra_info`: active topic/detail rows from Restaurant Information > Extra Info) |
 | `get_opening_hours` | `date` (optional) |
 | `get_menu` | `mealPeriod` (enum: breakfast/lunch/dinner, optional), `categoryName` (optional) |
 | `get_daily_specials` | none |

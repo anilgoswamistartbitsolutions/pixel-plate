@@ -721,7 +721,7 @@ function RestaurantInfoView({ notify }) {
     <div>
       <div className="sectionHeader"><div><h2>Restaurant information</h2><p>What the voice agent and dashboard both rely on as the single source of truth.</p></div></div>
       <div className="tabRow">
-        {[["profile", "Profile & hours"], ["policies", "Policies & amenities"], ["rules", "Booking rules"]].map(([k, l]) => (
+        {[["profile", "Profile & hours"], ["policies", "Policies & amenities"], ["rules", "Booking rules"], ["extra", "Extra Info"]].map(([k, l]) => (
           <button key={k} className={`tabChip ${tab === k ? "active" : ""}`} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
@@ -729,6 +729,103 @@ function RestaurantInfoView({ notify }) {
       {tab === "profile" && <ProfileForm settings={settings} onSave={saveProfile} />}
       {tab === "policies" && <PoliciesForm settings={settings} onSave={saveProfile} />}
       {tab === "rules" && <RulesForm rules={rules} onSave={saveRules} />}
+      {tab === "extra" && <ExtraInfoPanel notify={notify} />}
+    </div>
+  );
+}
+
+function ExtraInfoPanel({ notify }) {
+  const [rows, setRows] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(() => {
+    apiFetch("/api/restaurant/extra-info").then(setRows).catch((e) => setErr(e.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function toggleActive(row) {
+    try {
+      await apiFetch(`/api/restaurant/extra-info/${row.id}`, { method: "PATCH", body: JSON.stringify({ topic: row.topic, detail: row.detail, active: !row.active }) });
+      load();
+    } catch (e) { notify(e.message, "error"); }
+  }
+  async function remove(row) {
+    if (!confirm(`Remove "${row.topic}"?`)) return;
+    try {
+      await apiFetch(`/api/restaurant/extra-info/${row.id}`, { method: "DELETE" });
+      notify("Removed");
+      load();
+    } catch (e) { notify(e.message, "error"); }
+  }
+
+  if (err) return <ErrorBlock message={err} />;
+  if (!rows) return <LoadingBlock />;
+
+  return (
+    <div className="card">
+      <div className="sectionHeader" style={{ marginBottom: 14 }}>
+        <div>
+          <div className="cardTitle">Extra info</div>
+          <p className="cardHint">Add any topic + detail the voice agent should know -- birthday policy, dress code,
+            live music nights, anything not covered by the fields above. Only active rows are sent to the agent.</p>
+        </div>
+        <button className="button primary small" onClick={() => setShowAdd(true)}><Plus size={14} />Add row</button>
+      </div>
+
+      {rows.length === 0 ? (
+        <EmptyState title="No extra info yet" hint="Add a topic and detail for anything the agent should be able to answer about." />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {rows.map((row) => (
+            <div key={row.id} style={{ display: "flex", justifyContent: "space-between", gap: 14, padding: "12px 14px", border: "1px solid var(--line)", borderRadius: "var(--radius-sm)", background: row.active ? "#fff" : "var(--line-soft)" }}>
+              <div>
+                <strong style={{ fontSize: 13.5 }}>{row.topic}</strong>
+                <p className="cardHint" style={{ marginTop: 4 }}>{row.detail}</p>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "flex-start" }}>
+                <span className={`badge ${row.active ? "active" : "inactive"}`}>{row.active ? "Active" : "Hidden"}</span>
+                <button className="button ghost small" onClick={() => toggleActive(row)}>{row.active ? "Hide" : "Show"}</button>
+                <button className="button danger small" onClick={() => remove(row)}>Remove</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showAdd && <AddExtraInfoModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); notify("Extra info saved"); load(); }} />}
+    </div>
+  );
+}
+
+function AddExtraInfoModal({ onClose, onSaved }) {
+  const [form, setForm] = useState({ topic: "", detail: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await apiFetch("/api/restaurant/extra-info", { method: "POST", body: JSON.stringify(form) });
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalCard" onClick={(e) => e.stopPropagation()}>
+        <div className="modalHeader"><h3>Add extra info</h3><button className="button ghost small" onClick={onClose}><X size={14} /></button></div>
+        {error && <div className="loginError">{error}</div>}
+        <form onSubmit={submit} className="formGrid one">
+          <div className="field"><label>Topic / name</label><input className="textInput" required value={form.topic} onChange={(e) => setForm({ ...form, topic: e.target.value })} placeholder="e.g. Birthday policy" /></div>
+          <div className="field"><label>Detail (what the agent should say)</label><textarea className="textarea" rows={4} required value={form.detail} onChange={(e) => setForm({ ...form, detail: e.target.value })} placeholder="e.g. We bring out a complimentary dessert for birthdays -- just mention it when booking." /></div>
+          <button className="button primary" type="submit" disabled={saving} style={{ justifyContent: "center" }}>{saving ? "Saving..." : "Save"}</button>
+        </form>
+      </div>
     </div>
   );
 }
