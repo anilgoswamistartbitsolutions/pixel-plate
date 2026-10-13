@@ -80,11 +80,11 @@ create index if not exists idx_restaurant_extra_info_restaurant on restaurant_ex
 
 create table if not exists booking_rules (
   restaurant_id bigint primary key references restaurants(id) on delete cascade,
-  max_party_size_auto integer not null default 8,
-  max_tables_per_auto_booking integer not null default 1,
+  max_party_size_auto integer not null default 9,
+  max_tables_per_auto_booking integer not null default 3,
   full_table_requires_approval boolean not null default false,
   combined_table_requires_approval boolean not null default true,
-  large_group_threshold integer not null default 9,
+  large_group_threshold integer not null default 10,
   deposit_required boolean not null default false,
   reservation_duration_minutes integer not null default 90,
   turnover_buffer_minutes integer not null default 15,

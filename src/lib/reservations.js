@@ -66,7 +66,10 @@ export async function createReservation({
       return { status: "pending", reason: plan.reason, groupRequest: pending.rows[0] };
     }
 
-    const tooManyTables = plan.tableIds.length > rules.max_tables_per_auto_booking;
+    // Below the large-group threshold, a multi-table/shared split is allowed to auto-confirm
+    // on its own -- the per-table/per-combination approval cap (max_tables_per_auto_booking)
+    // only kicks in once the party is already large enough to need review anyway.
+    const tooManyTables = partySize >= rules.large_group_threshold && plan.tableIds.length > rules.max_tables_per_auto_booking;
     const requiresApproval = plan.requiresApproval || exceedsAutoLimits || tooManyTables;
 
     if (requiresApproval) {
@@ -252,8 +255,13 @@ export async function listReservations({ restaurantId, date, dateFrom, dateTo, s
   values.push(limit);
   const result = await query(
     `select r.*, coalesce(
-        (select json_agg(json_build_object('seat_id', sa.seat_id, 'table_id', sa.table_id, 'code', ts.code))
-         from seat_allocations sa join table_seats ts on ts.id = sa.seat_id
+        (select json_agg(json_build_object(
+            'seat_id', sa.seat_id, 'table_id', sa.table_id, 'code', ts.code,
+            'table_code', rt.code, 'table_name', rt.display_name, 'table_capacity', rt.capacity
+          ))
+         from seat_allocations sa
+         join table_seats ts on ts.id = sa.seat_id
+         join restaurant_tables rt on rt.id = sa.table_id
          where sa.reservation_id = r.id and sa.status = 'active'),
         '[]'
       ) as seats

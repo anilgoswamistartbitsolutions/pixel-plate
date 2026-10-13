@@ -92,7 +92,10 @@ export async function planAllocation({ client, restaurantId, startAt, endAt, par
       seatingMode: tableIds.length > 1 ? "combined" : (chosen[0].count === chosen[0].table.seats.length ? "full_table" : "partial"),
       tableIds,
       seatIds,
-      requiresApproval: tableIds.length > 1 || fullTableAny,
+      // Using several tables at once doesn't by itself need staff review -- createReservation
+      // gates on party size (the configured auto-confirm threshold), not table count. A full
+      // table still honors that specific table's own approval flag.
+      requiresApproval: fullTableAny,
       summary: chosen.map(({ table, count }) => `${table.display_name}: ${count} guest${count === 1 ? "" : "s"}`).join(" / ")
     };
   }
@@ -110,7 +113,7 @@ export async function planAllocation({ client, restaurantId, startAt, endAt, par
         seatingMode: "combined",
         tableIds: chosen.map((t) => t.id),
         seatIds: seats.map((s) => s.id),
-        requiresApproval: true,
+        requiresApproval: false, // see createReservation -- gated on party size, not table count
         summary: `${chosen.map((t) => t.display_name).join(" + ")}: seats ${seats.map((s) => s.code).join(", ")}`
       };
     }
@@ -193,7 +196,7 @@ export async function planAllocation({ client, restaurantId, startAt, endAt, par
         seatingMode: "partial",
         tableIds: picked.map((p) => p.table.id),
         seatIds: picked.flatMap((p) => p.seats.map((s) => s.id)),
-        requiresApproval: picked.length > 1,
+        requiresApproval: false, // see createReservation -- gated on party size, not table count
         summary: picked.map((p) => `${p.table.display_name}: ${p.seats.map((s) => s.code).join(", ")}`).join(" / ")
       };
     }

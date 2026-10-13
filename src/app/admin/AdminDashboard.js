@@ -100,7 +100,7 @@ export default function AdminDashboard() {
         <header className="topBar">
           <div className="topBarSub">Pixel Plate &middot; {staff.role === "super_admin" ? "Super Admin" : "Admin"} access</div>
           <div className="topBarRight">
-            {["overview", "reservations", "reports"].includes(view) && (
+            {["overview", "reports"].includes(view) && (
               <input className="dateInput" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             )}
           </div>
@@ -108,7 +108,7 @@ export default function AdminDashboard() {
         <main className="contentArea">
           {view === "overview" && <OverviewView date={date} onNavigate={setView} />}
           {view === "floorplan" && <FloorPlanView notify={notify} staff={staff} />}
-          {view === "reservations" && <ReservationsView date={date} notify={notify} />}
+          {view === "reservations" && <ReservationsView notify={notify} />}
           {view === "groups" && <GroupRequestsView notify={notify} />}
           {view === "menu" && <MenuView notify={notify} />}
           {view === "takeaway" && <TakeAwayView notify={notify} />}
@@ -722,14 +722,39 @@ function EditTableModal({ table, floors, onClose, onSaved }) {
 
 /* ====================================================================== Reservations */
 
-function ReservationsView({ date, notify }) {
+function todayIso() { return new Date().toISOString().slice(0, 10); }
+
+/** "3 from Table A, 4 from Table B (full)" -- groups a reservation's seat allocations by
+ * table so the connection between a booking and exactly which tables/how many seats on each
+ * is readable at a glance, instead of a flat list of seat codes. */
+function SeatBreakdown({ seats }) {
+  if (!seats?.length) return null;
+  const byTable = new Map();
+  for (const s of seats) {
+    const entry = byTable.get(s.table_id) || { name: s.table_name, capacity: s.table_capacity, codes: [] };
+    entry.codes.push(s.code);
+    byTable.set(s.table_id, entry);
+  }
+  return (
+    <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 2 }}>
+      {Array.from(byTable.values()).map((t, i) => (
+        <div key={i} className="cardHint" style={{ fontSize: 11.5 }}>
+          {t.codes.length} from {t.name}{t.codes.length === t.capacity ? " (full table)" : ""} &middot; {t.codes.join(", ")}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ReservationsView({ notify }) {
   const [status, setStatus] = useState("");
   const [list, setList] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [err, setErr] = useState("");
   const [rangeMode, setRangeMode] = useState(false);
-  const [rangeFrom, setRangeFrom] = useState(date);
-  const [rangeTo, setRangeTo] = useState(date);
+  const [date, setDate] = useState(todayIso);
+  const [rangeFrom, setRangeFrom] = useState(todayIso);
+  const [rangeTo, setRangeTo] = useState(todayIso);
   const [editing, setEditing] = useState(null);
 
   const load = useCallback(() => {
@@ -776,14 +801,18 @@ function ReservationsView({ date, notify }) {
           <button className={`button small ${!rangeMode ? "primary" : "secondary"}`} onClick={() => setRangeMode(false)}>Single day</button>
           <button className={`button small ${rangeMode ? "primary" : "secondary"}`} onClick={() => setRangeMode(true)}>Date range</button>
         </div>
-        {rangeMode && (
+        {rangeMode ? (
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <input className="dateInput" type="date" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} />
             <span className="cardHint">to</span>
             <input className="dateInput" type="date" value={rangeTo} min={rangeFrom} onChange={(e) => setRangeTo(e.target.value)} />
           </div>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input className="dateInput" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            {date !== todayIso() && <button className="button ghost small" onClick={() => setDate(todayIso())}>Today</button>}
+          </div>
         )}
-        {!rangeMode && <span className="cardHint">Using the date picker in the top bar. Switch to Date range to view multiple days at once.</span>}
       </div>
 
       <div className="tabRow">
@@ -808,11 +837,7 @@ function ReservationsView({ date, notify }) {
                   <td>{r.start_time?.slice(0, 5)}</td>
                   <td>
                     {titleCase(r.seating_mode)}
-                    {r.seats?.length > 0 && (
-                      <div className="pillRow" style={{ marginTop: 4 }}>
-                        {r.seats.map((s, i) => <span key={i} className="pill">{s.code}</span>)}
-                      </div>
-                    )}
+                    <SeatBreakdown seats={r.seats} />
                   </td>
                   <td><span className={`badge ${r.status}`}>{titleCase(r.status)}</span></td>
                   <td>{titleCase(r.source)}</td>
@@ -835,11 +860,38 @@ function ReservationsView({ date, notify }) {
   );
 }
 
-const TIME_SLOTS = [
-  { label: "Morning", icon: "🌅", times: ["08:00", "09:00", "10:00", "11:00"] },
-  { label: "Mid-day", icon: "☀️", times: ["12:00", "13:00", "14:00", "15:00"] },
-  { label: "Evening", icon: "🌙", times: ["18:00", "19:00", "20:00", "21:00"] }
-];
+const SLOT_ICONS = { morning: "\u{1F305}", midday: "\u{2600}\u{FE0F}", evening: "\u{1F319}" };
+
+/** HH:MM options at a fixed interval within [start, end), inclusive of start -- used to build
+ * the time dropdown instead of a free native time picker, so staff can only pick a time that
+ * actually falls within the restaurant's configured slot window. */
+function timeOptionsInRange(start, end, intervalMinutes = 30) {
+  const toMin = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+  const startMin = toMin(start);
+  const endMin = toMin(end);
+  const options = [];
+  for (let m = startMin; m < endMin; m += intervalMinutes) {
+    options.push(`${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`);
+  }
+  return options;
+}
+
+function formatTime12h(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${period}`;
+}
+
+function Stepper({ value, min = 0, max, onChange, disabled }) {
+  return (
+    <div className="stepper">
+      <button type="button" className="stepperBtn" disabled={disabled || value <= min} onClick={() => onChange(Math.max(min, value - 1))}>&minus;</button>
+      <span className="stepperValue">{value}</span>
+      <button type="button" className="stepperBtn" disabled={disabled || value >= max} onClick={() => onChange(Math.min(max, value + 1))}>+</button>
+    </div>
+  );
+}
 
 function EditReservationModal({ reservation, onClose, onSaved }) {
   const [form, setForm] = useState({
@@ -847,8 +899,12 @@ function EditReservationModal({ reservation, onClose, onSaved }) {
     startTime: reservation.start_time?.slice(0, 5) || "19:00",
     partySize: reservation.party_size
   });
+  const [slots, setSlots] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => { apiFetch("/api/menu/daily-slots").then(setSlots).catch(() => {}); }, []);
+  const allTimes = slots ? slots.flatMap((s) => timeOptionsInRange(s.start_time.slice(0, 5), s.end_time.slice(0, 5)).map((t) => ({ t, slot: s.slot }))) : [];
 
   async function submit(e) {
     e.preventDefault();
@@ -870,7 +926,12 @@ function EditReservationModal({ reservation, onClose, onSaved }) {
         <div className="cardHint" style={{ marginBottom: 14 }}>{reservation.customer_name} &middot; {reservation.phone}</div>
         <form onSubmit={submit} className="formGrid">
           <div className="field"><label>Date</label><input className="textInput" type="date" required value={form.reservationDate} onChange={(e) => setForm({ ...form, reservationDate: e.target.value })} /></div>
-          <div className="field"><label>Time</label><input className="textInput" type="time" required value={form.startTime} onChange={(e) => setForm({ ...form, startTime: e.target.value })} /></div>
+          <div className="field"><label>Time</label>
+            <select className="select" required value={form.startTime} onChange={(e) => setForm({ ...form, startTime: e.target.value })}>
+              {!allTimes.some((o) => o.t === form.startTime) && <option value={form.startTime}>{formatTime12h(form.startTime)} (current)</option>}
+              {allTimes.map((o) => <option key={o.t} value={o.t}>{formatTime12h(o.t)} &middot; {titleCase(o.slot)}</option>)}
+            </select>
+          </div>
           <div className="field"><label>Party size</label><input className="textInput" type="number" min="1" required value={form.partySize} onChange={(e) => setForm({ ...form, partySize: Number(e.target.value) })} /></div>
           <div className="field" style={{ gridColumn: "1 / -1" }}>
             <span className="cardHint">If the new time/size isn&rsquo;t available, the original booking stays unchanged.</span>
@@ -883,7 +944,9 @@ function EditReservationModal({ reservation, onClose, onSaved }) {
 }
 
 function AddReservationModal({ defaultDate, onClose, onSaved }) {
-  const [form, setForm] = useState({ customerName: "", phone: "", partySize: 2, reservationDate: defaultDate, startTime: "19:00", seatingPreference: "together", notes: "" });
+  const [form, setForm] = useState({ customerName: "", phone: "", partySize: 2, reservationDate: defaultDate, startTime: "", seatingPreference: "together", notes: "" });
+  const [activeSlot, setActiveSlot] = useState("evening");
+  const [slots, setSlots] = useState(null);
   // tableCounts: { [tableId]: guestsAtThatTable } -- explicit per-table split ("3 on table A,
   // 3 on table B"), not just which tables to use.
   const [tableCounts, setTableCounts] = useState({});
@@ -892,15 +955,45 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const activeSlot = TIME_SLOTS.find((s) => s.times.includes(form.startTime))?.label;
+  useEffect(() => {
+    apiFetch("/api/menu/daily-slots").then((rows) => {
+      setSlots(rows);
+      const evening = rows.find((s) => s.slot === "evening");
+      if (evening) {
+        setActiveSlot("evening");
+        setForm((f) => ({ ...f, startTime: timeOptionsInRange(evening.start_time.slice(0, 5), evening.end_time.slice(0, 5))[0] || "" }));
+      }
+    }).catch(() => {});
+  }, []);
+
+  const slotTimes = slots ? Object.fromEntries(slots.map((s) => [s.slot, timeOptionsInRange(s.start_time.slice(0, 5), s.end_time.slice(0, 5))])) : {};
+  const currentSlotTimes = slotTimes[activeSlot] || [];
+
+  function pickSlot(slotKey) {
+    setActiveSlot(slotKey);
+    const times = slotTimes[slotKey] || [];
+    setForm((f) => ({ ...f, startTime: times[0] || "" }));
+    setOptions(null);
+  }
+
   const assignedTotal = Object.values(tableCounts).reduce((sum, n) => sum + (Number(n) || 0), 0);
   const anyAssigned = Object.values(tableCounts).some((n) => Number(n) > 0);
   const splitValid = !anyAssigned || assignedTotal === form.partySize;
 
-  function setTableCount(optionId, maxFree, rawValue) {
+  function toggleTable(optionId, maxFree) {
+    setTableCounts((prev) => {
+      const current = prev[optionId] || 0;
+      if (current > 0) return { ...prev, [optionId]: 0 };
+      const otherTotal = Object.entries(prev).reduce((sum, [id, n]) => (id === String(optionId) ? sum : sum + (Number(n) || 0)), 0);
+      const remaining = Math.max(0, form.partySize - otherTotal);
+      return { ...prev, [optionId]: Math.max(1, Math.min(maxFree, remaining || 1)) };
+    });
+  }
+
+  function setTableCount(optionId, maxFree, nextValue) {
     const otherTotal = Object.entries(tableCounts).reduce((sum, [id, n]) => (id === String(optionId) ? sum : sum + (Number(n) || 0)), 0);
     const remaining = Math.max(0, form.partySize - otherTotal);
-    const clamped = Math.max(0, Math.min(Number(rawValue) || 0, maxFree, remaining));
+    const clamped = Math.max(0, Math.min(nextValue, maxFree, remaining));
     setTableCounts((prev) => ({ ...prev, [optionId]: clamped }));
   }
 
@@ -954,17 +1047,24 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
 
           <div className="field" style={{ gridColumn: "1 / -1" }}>
             <label>Time of day</label>
-            <div className="pillRow">
-              {TIME_SLOTS.map((slot) => (
-                <button type="button" key={slot.label}
-                  className={`button small ${activeSlot === slot.label ? "primary" : "secondary"}`}
-                  onClick={() => { setForm({ ...form, startTime: slot.times[0] }); setOptions(null); }}>
-                  {slot.icon} {slot.label}
-                </button>
-              ))}
-            </div>
+            {!slots ? <span className="cardHint">Loading serving hours...</span> : (
+              <div className="pillRow">
+                {slots.map((s) => (
+                  <button type="button" key={s.slot}
+                    className={`button small ${activeSlot === s.slot ? "primary" : "secondary"}`}
+                    onClick={() => pickSlot(s.slot)}>
+                    {SLOT_ICONS[s.slot]} {titleCase(s.slot)}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-          <div className="field"><label>Exact time</label><input className="textInput" type="time" required value={form.startTime} onChange={(e) => { setForm({ ...form, startTime: e.target.value }); setOptions(null); }} /></div>
+          <div className="field"><label>Time</label>
+            <select className="select" required value={form.startTime} onChange={(e) => { setForm({ ...form, startTime: e.target.value }); setOptions(null); }}>
+              {currentSlotTimes.length === 0 && <option value="">No times in this slot</option>}
+              {currentSlotTimes.map((t) => <option key={t} value={t}>{formatTime12h(t)}</option>)}
+            </select>
+          </div>
           <div className="field"><label>Seating preference</label>
             <select className="select" value={form.seatingPreference} onChange={(e) => setForm({ ...form, seatingPreference: e.target.value })}>
               <option value="together">Everyone together</option>
@@ -974,8 +1074,9 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
           </div>
 
           <div className="field" style={{ gridColumn: "1 / -1" }}>
-            <button type="button" className="button secondary small" onClick={checkAvailability} disabled={checking}>
-              {checking ? "Checking..." : "Check table availability"}
+            <button type="button" className="checkAvailabilityBtn" onClick={checkAvailability} disabled={checking}>
+              <CalendarClock size={16} />
+              {checking ? "Checking availability..." : "Check table availability"}
             </button>
           </div>
 
@@ -988,23 +1089,22 @@ function AddReservationModal({ defaultDate, onClose, onSaved }) {
               ) : (
                 <>
                   <label>
-                    {options.length} table{options.length === 1 ? "" : "s"} available -- optionally set how many guests sit at
-                    each (e.g. 3 on one table, 3 on another). Leave all at 0 to let us pick the best fit.
+                    {options.length} table{options.length === 1 ? "" : "s"} available -- check a table to seat guests there, then
+                    set how many with the +/- (e.g. 3 on one table, 3 on another). Leave none checked to let us pick the best fit.
                   </label>
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
                     {options.map((o) => {
                       const count = tableCounts[o.id] || 0;
+                      const checked = count > 0;
+                      const maxForThis = Math.min(o.freeSeatCount, form.partySize);
                       return (
-                        <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: `1px solid ${count > 0 ? "var(--brand)" : "var(--line)"}`, borderRadius: "var(--radius-sm)", background: count > 0 ? "var(--brand-soft)" : "#fff" }}>
-                          <div style={{ flex: 1 }}>
+                        <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: `1px solid ${checked ? "var(--brand)" : "var(--line)"}`, borderRadius: "var(--radius-sm)", background: checked ? "var(--brand-soft)" : "#fff" }}>
+                          <input type="checkbox" checked={checked} onChange={() => toggleTable(o.id, o.freeSeatCount)} />
+                          <div style={{ flex: 1, cursor: "pointer" }} onClick={() => toggleTable(o.id, o.freeSeatCount)}>
                             <span style={{ fontSize: 13.5, fontWeight: 600 }}>{o.displayName}</span>
                             <div className="cardHint">{o.capacity} seats &middot; {o.freeSeatCount} free{o.fullTable ? " &middot; full table" : ""}</div>
                           </div>
-                          <input
-                            type="number" min="0" max={Math.min(o.freeSeatCount, form.partySize)} value={count}
-                            onChange={(e) => setTableCount(o.id, o.freeSeatCount, e.target.value)}
-                            className="textInput" style={{ width: 64, textAlign: "center", padding: "6px 4px" }}
-                          />
+                          <Stepper value={count} min={0} max={maxForThis} disabled={!checked} onChange={(next) => setTableCount(o.id, o.freeSeatCount, next)} />
                         </div>
                       );
                     })}
