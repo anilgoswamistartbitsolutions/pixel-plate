@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "db:migrate": "node scripts/migrate.cjs",
     "db:seed": "node scripts/seed-demo.cjs",
-    "test:booking": "node tests/booking-engine.test.mjs"
+    "test:booking": "node --import ./tests/register.mjs tests/booking-engine.test.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

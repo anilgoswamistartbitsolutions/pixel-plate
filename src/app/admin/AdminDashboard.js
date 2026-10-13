@@ -1074,14 +1074,20 @@ function AddLeadModal({ onClose, onSaved }) {
 
 function MenuView({ notify }) {
   const [tab, setTab] = useState("items");
+  const [itemFilter, setItemFilter] = useState("all");
   const [items, setItems] = useState(null);
   const [categories, setCategories] = useState([]);
+  const [configuredIds, setConfiguredIds] = useState(new Set());
   const [showAdd, setShowAdd] = useState(false);
   const [err, setErr] = useState("");
 
   const load = useCallback(() => {
-    Promise.all([apiFetch("/api/menu/items"), apiFetch("/api/menu/categories")])
-      .then(([i, c]) => { setItems(i); setCategories(c); })
+    Promise.all([apiFetch("/api/menu/items"), apiFetch("/api/menu/categories"), apiFetch("/api/menu/configurations")])
+      .then(([i, c, configs]) => {
+        setItems(i);
+        setCategories(c);
+        setConfiguredIds(new Set(configs.flatMap((cfg) => cfg.item_ids.map(Number))));
+      })
       .catch((e) => setErr(e.message));
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -1096,7 +1102,8 @@ function MenuView({ notify }) {
   if (err) return <ErrorBlock message={err} />;
   if (!items) return <LoadingBlock />;
 
-  const byCategory = categories.map((c) => ({ ...c, items: items.filter((i) => i.category_id === c.id) }));
+  const filteredItems = itemFilter === "configured" ? items.filter((i) => configuredIds.has(i.id)) : items;
+  const byCategory = categories.map((c) => ({ ...c, items: filteredItems.filter((i) => i.category_id === c.id) }));
 
   return (
     <div>
@@ -1113,6 +1120,17 @@ function MenuView({ notify }) {
 
       {tab === "config" && <MenuConfigurationsPanel items={items} notify={notify} />}
       {tab === "calendar" && <MenuCalendarPanel notify={notify} />}
+
+      {tab === "items" && (
+        <div className="pillRow" style={{ marginBottom: 16 }}>
+          <button className={`button small ${itemFilter === "all" ? "primary" : "secondary"}`} onClick={() => setItemFilter("all")}>All items</button>
+          <button className={`button small ${itemFilter === "configured" ? "primary" : "secondary"}`} onClick={() => setItemFilter("configured")}>In a configuration</button>
+        </div>
+      )}
+
+      {tab === "items" && filteredItems.length === 0 && (
+        <EmptyState title="No items" hint={itemFilter === "configured" ? "No items belong to a saved configuration yet." : "Add a menu item to get started."} />
+      )}
 
       {tab === "items" && byCategory.map((cat) => cat.items.length > 0 && (
         <div key={cat.id} style={{ marginBottom: 22 }}>
