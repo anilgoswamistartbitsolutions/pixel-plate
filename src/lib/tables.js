@@ -47,6 +47,8 @@ export async function listFloorPlan(restaurantId) {
   }));
 }
 
+// Size (seating capacity tier) and shape (how it's drawn) are independent -- a table's
+// physical footprint is the size's base box, adjusted for the chosen shape.
 const SIZE_DIMENSIONS = {
   small: { width: 90, height: 90 },
   medium: { width: 120, height: 90 },
@@ -54,10 +56,19 @@ const SIZE_DIMENSIONS = {
   xl: { width: 220, height: 140 }
 };
 
+export function dimensionsForShape(sizeLabel, shape) {
+  const base = SIZE_DIMENSIONS[sizeLabel] || SIZE_DIMENSIONS.medium;
+  if (shape === "round") { const side = Math.max(base.width, base.height); return { width: side, height: side }; }
+  if (shape === "oval_h") return { width: Math.round(base.width * 1.3), height: base.height };
+  if (shape === "oval_v") return { width: base.width, height: Math.round(base.height * 1.3) };
+  return base; // rect
+}
+
 export async function createTable(restaurantId, payload) {
   return withTransaction(async (client) => {
     const sizeLabel = payload.sizeLabel || "medium";
-    const dims = SIZE_DIMENSIONS[sizeLabel] || SIZE_DIMENSIONS.medium;
+    const shape = payload.shape || "rect";
+    const dims = dimensionsForShape(sizeLabel, shape);
     const tableResult = await client.query(
       `insert into restaurant_tables
         (restaurant_id, code, display_name, capacity, table_type, shareable, shareable_party_sizes,
@@ -95,12 +106,25 @@ export async function updateTable(restaurantId, tableId, payload) {
     width: "width", height: "height", shape: "shape", active: "active",
     floor_id: "floorId", size_label: "sizeLabel"
   };
+  // Shape and size are independent, but changing either recomputes the footprint (unless the
+  // caller also passes explicit width/height) so the canvas shape updates automatically.
+  const effectivePayload = { ...payload };
+  if ((payload.shape || payload.sizeLabel) && !("width" in payload) && !("height" in payload)) {
+    const current = await query("select shape, size_label from restaurant_tables where id = $1 and restaurant_id = $2", [tableId, restaurantId]);
+    const row = current.rows[0];
+    if (row) {
+      const dims = dimensionsForShape(payload.sizeLabel || row.size_label, payload.shape || row.shape);
+      effectivePayload.width = dims.width;
+      effectivePayload.height = dims.height;
+    }
+  }
+
   const sets = [];
   const values = [tableId, restaurantId];
   for (const field of fields) {
     const key = map[field];
-    if (!(key in payload)) continue;
-    values.push(field === "floor_id" && payload[key] === "" ? null : payload[key]);
+    if (!(key in effectivePayload)) continue;
+    values.push(field === "floor_id" && effectivePayload[key] === "" ? null : effectivePayload[key]);
     sets.push(`${field} = $${values.length}`);
   }
   if (!sets.length) return null;

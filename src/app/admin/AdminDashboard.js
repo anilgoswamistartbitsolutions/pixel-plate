@@ -315,9 +315,14 @@ function FloorDetailView({ floor, tables, isSuperAdmin, notify, onBack, onReload
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [editMode, setEditMode] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
   const [localTables, setLocalTables] = useState(tables);
 
   useEffect(() => { setLocalTables(tables); }, [tables]);
+
+  const inactiveCount = localTables.filter((t) => !t.active).length;
+  const visibleTables = showInactive ? localTables : localTables.filter((t) => t.active);
 
   async function toggleActive(table) {
     try {
@@ -352,28 +357,37 @@ function FloorDetailView({ floor, tables, isSuperAdmin, notify, onBack, onReload
       <div className="sectionHeader">
         <div>
           <h2>{floor?.name}</h2>
-          <p>Drag tables to arrange the room -- position saves automatically. Click a table to see seats, reservations, and edit or delete it.</p>
+          <p>{editMode ? "Edit mode: drag tables to arrange the room -- position saves automatically." : "Click a table to see seats and reservations. Turn on Edit mode to move or add tables."}</p>
         </div>
-        <button className="button primary" onClick={() => setShowAdd(true)}><Plus size={15} />Add table</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className={`button ${editMode ? "primary" : "secondary"}`} onClick={() => setEditMode((v) => !v)}>
+            {editMode ? "Done editing" : "Edit mode"}
+          </button>
+          {editMode && <button className="button primary" onClick={() => setShowAdd(true)}><Plus size={15} />Add table</button>}
+        </div>
       </div>
 
       <div className="legendRow">
         <span><span className="legendDot" style={{ background: "#fff", border: "2px solid var(--line)" }} />Available</span>
         <span><span className="legendDot" style={{ background: "#fbeedb", border: "2px solid var(--amber)" }} />Reserved upcoming</span>
         <span><span className="legendDot" style={{ background: "var(--danger-soft)", border: "2px solid var(--danger)" }} />Occupied now</span>
-        <span><span className="legendDot" style={{ background: "#eee7db", border: "2px solid var(--muted)" }} />Inactive</span>
+        {inactiveCount > 0 && (
+          <button className="button ghost small" onClick={() => setShowInactive((v) => !v)} style={{ marginLeft: "auto" }}>
+            {showInactive ? "Hide" : "Show"} {inactiveCount} inactive table{inactiveCount === 1 ? "" : "s"}
+          </button>
+        )}
       </div>
 
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
         <div className="floorCanvasWrap" style={{ flex: "1 1 560px", minWidth: 320 }}>
           <div className="floorCanvas">
-            {localTables.length === 0 && (
+            {visibleTables.length === 0 && (
               <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <EmptyState title="No tables on this floor yet" hint="Click Add table to place your first one here." />
+                <EmptyState title="No tables on this floor yet" hint="Turn on Edit mode and click Add table to place your first one here." />
               </div>
             )}
-            {localTables.map((table) => (
-              <DraggableTable key={table.id} table={table} selected={selected?.id === table.id} onSelect={() => setSelected(table)} onDrag={handleDrag} />
+            {visibleTables.map((table) => (
+              <DraggableTable key={table.id} table={table} selected={selected?.id === table.id} onSelect={() => setSelected(table)} onDrag={handleDrag} draggable={editMode} />
             ))}
           </div>
         </div>
@@ -394,11 +408,11 @@ function FloorDetailView({ floor, tables, isSuperAdmin, notify, onBack, onReload
   );
 }
 
-function DraggableTable({ table, selected, onSelect, onDrag }) {
+function DraggableTable({ table, selected, onSelect, onDrag, draggable }) {
   const [dragging, setDragging] = useState(false);
 
   function onMouseDown(e) {
-    if (!table.active) { onSelect(); return; }
+    if (!table.active || !draggable) { onSelect(); return; }
     e.preventDefault();
     setDragging(false);
     // Anchor to the position/cursor at drag start and always compute the new absolute
@@ -440,7 +454,7 @@ function DraggableTable({ table, selected, onSelect, onDrag }) {
   return (
     <div
       className={`floorTable ${table.shape} ${statusClass} ${selected ? "selected" : ""}`}
-      style={{ left: `${table.pos_x}px`, top: `${table.pos_y}px`, width: `${table.width}px`, height: `${table.height}px` }}
+      style={{ left: `${table.pos_x}px`, top: `${table.pos_y}px`, width: `${table.width}px`, height: `${table.height}px`, cursor: draggable && table.active ? "grab" : "pointer" }}
       onMouseDown={onMouseDown}
     >
       <span className="code">{table.code}</span>
@@ -490,9 +504,10 @@ function TableDetail({ table, onToggleActive, onEdit, onDelete, onClose }) {
 }
 
 const TABLE_SIZE_OPTIONS = [["small", "Small (2-top)"], ["medium", "Medium (4-top)"], ["large", "Large (6-top)"], ["xl", "XL / Private (8+)"]];
+const TABLE_SHAPE_OPTIONS = [["rect", "Rectangle"], ["round", "Circular"], ["oval_h", "Oval (horizontal)"], ["oval_v", "Oval (vertical)"]];
 
 function AddTableModal({ floors, defaultFloorId, onClose, onSaved }) {
-  const [form, setForm] = useState({ code: "", displayName: "", capacity: 4, tableType: "standard", sizeLabel: "medium", floorId: defaultFloorId || floors?.[0]?.id || "", shareable: false });
+  const [form, setForm] = useState({ code: "", displayName: "", capacity: 4, tableType: "standard", sizeLabel: "medium", shape: "rect", floorId: defaultFloorId || floors?.[0]?.id || "", shareable: false });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -533,6 +548,11 @@ function AddTableModal({ floors, defaultFloorId, onClose, onSaved }) {
           <div className="field"><label>Size</label>
             <select className="select" value={form.sizeLabel} onChange={(e) => setForm({ ...form, sizeLabel: e.target.value })}>
               {TABLE_SIZE_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </div>
+          <div className="field"><label>Shape</label>
+            <select className="select" value={form.shape} onChange={(e) => setForm({ ...form, shape: e.target.value })}>
+              {TABLE_SHAPE_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </div>
           <div className="field" style={{ gridColumn: "1 / -1" }}>
@@ -581,7 +601,7 @@ function AddFloorModal({ onClose, onSaved }) {
 function EditTableModal({ table, floors, onClose, onSaved }) {
   const [form, setForm] = useState({
     displayName: table.display_name, capacity: table.capacity, tableType: table.table_type,
-    sizeLabel: table.size_label || "medium", floorId: table.floor_id || "",
+    sizeLabel: table.size_label || "medium", shape: table.shape || "rect", floorId: table.floor_id || "",
     shareable: table.shareable, exclusiveOnly: table.exclusive_only, fullTableRequiresApproval: table.full_table_requires_approval
   });
   const [saving, setSaving] = useState(false);
@@ -627,6 +647,11 @@ function EditTableModal({ table, floors, onClose, onSaved }) {
           <div className="field"><label>Size</label>
             <select className="select" value={form.sizeLabel} onChange={(e) => setForm({ ...form, sizeLabel: e.target.value })}>
               {TABLE_SIZE_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </div>
+          <div className="field"><label>Shape</label>
+            <select className="select" value={form.shape} onChange={(e) => setForm({ ...form, shape: e.target.value })}>
+              {TABLE_SHAPE_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </div>
           <div className="field" style={{ gridColumn: "1 / -1" }}>

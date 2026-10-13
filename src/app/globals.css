@@ -224,7 +224,7 @@ a { color: var(--brand-dark); text-decoration: none; }
   cursor: grab; box-shadow: var(--shadow-sm); user-select: none; transition: box-shadow .18s, transform .18s, border-color .18s;
 }
 .floorTable:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
-.floorTable.round { border-radius: 50%; }
+.floorTable.round, .floorTable.oval_h, .floorTable.oval_v { border-radius: 50%; }
 .floorTable.occupied { border-color: var(--danger); background: var(--danger-soft); }
 .floorTable.reserved { border-color: var(--amber); background: var(--amber-soft); }
 .floorTable.inactive { border-color: #cfc5b7; background: #f1ece3; opacity: .6; cursor: default; }
