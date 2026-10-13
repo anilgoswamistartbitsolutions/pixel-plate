@@ -222,7 +222,24 @@ export const TOOLS = {
         status: result.order.status
       };
     } catch (error) {
-      if (error instanceof TakeawayError) return { confirmed: false, error: error.message };
+      if (error instanceof TakeawayError) {
+        // Hitting the capacity limit is never just a dead end for the caller -- always leave
+        // staff a callback task with exactly what the guest wanted, so a human follows up
+        // instead of the guest just being told "no" and hanging up.
+        if (error.code === "limit_reached") {
+          const followup = await createFollowup({
+            restaurantId,
+            title: `Takeaway capacity reached -- callback needed for ${customerName}`,
+            notes: `Phone: ${phone}. Wanted: ${(items || []).map((i) => `${i.quantity || 1}x ${i.name}`).join(", ") || itemsText}. Requested pickup: ${slot || "unspecified"}${time ? ` at ${time}` : ""}.${notes ? ` Notes: ${notes}` : ""}`
+          });
+          return {
+            confirmed: false, error: error.message, needs_staff: true, callback_requested: true,
+            followup_id: followup.id,
+            message: "We're at capacity right now -- a staff member has the details and will call back to confirm, or you can hold while I connect you."
+          };
+        }
+        return { confirmed: false, error: error.message };
+      }
       throw error;
     }
   },
